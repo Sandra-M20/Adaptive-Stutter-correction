@@ -248,7 +248,7 @@ class StutterCorrectionPipeline:
             # Fallback if module is missing
             class MockSTT:
                 def __init__(self, size): pass
-                def transcribe(self, sig, sr, language=None): return "[STT module missing]"
+                def transcribe(self, sig, sr, language=None, initial_prompt=None): return "[STT module missing]"
                 def _load(self): return True
             self.stt = MockSTT(whisper_model_size)
         

@@ -10,7 +10,7 @@ import os, io, json, time, copy
 import numpy as np
 import soundfile as sf
 import streamlit as st
-from config import TARGET_SR, MAX_TOTAL_DURATION_REDUCTION
+from config import TARGET_SR, MAX_TOTAL_DURATION_REDUCTION, WHISPER_MODEL_SIZE
 
 # ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -140,7 +140,7 @@ def signal_to_bytes(signal: np.ndarray, sr: int) -> bytes:
 
 
 @st.cache_resource(show_spinner=False)
-def load_pipeline(whisper_model_size: str):
+def load_pipeline(whisper_model_size: str, _v=2):
     """Load StutterCorrectionPipeline once and cache it."""
     from pipeline import StutterCorrectionPipeline
     return StutterCorrectionPipeline(use_adaptive=True, noise_reduce=True, transcribe=True,
@@ -286,14 +286,29 @@ with st.sidebar:
 
     enable_stt   = st.toggle("Run Speech-to-Text", value=True,
                              help="Whisper transcription (slower, needs model download)")
-    whisper_model = "tiny"
+    
+    whisper_model = WHISPER_MODEL_SIZE
+    whisper_prompt = ""
+    asr_lang = None
+    
     if enable_stt:
         whisper_model = st.selectbox(
             "Whisper model size",
             options=["tiny", "base", "small", "medium", "large"],
-            index=0,
-            help="Smaller models are much faster. First run may download the model.",
+            index=2, # Default to 'small' for better accuracy
+            help="Small/Medium provide MUCH better accuracy for stuttered speech than Base/Tiny.",
         )
+        whisper_prompt = st.text_input(
+            "ASR Initial Prompt",
+            value="This is a transcription of a person with a stutter. Please normalize the output by removing repetitions and filler words.",
+            help="Guiding the AI helps it ignore 'uhm', 'er', and repeated sounds."
+        )
+        asr_lang_opt = st.selectbox(
+            "Speech Language",
+            options=["Auto-detect", "English (en)", "French (fr)", "Hindi (hi)", "Spanish (es)"],
+            index=1 # Default to English
+        )
+        asr_lang = asr_lang_opt.split('(')[-1].strip(')') if "Auto-detect" not in asr_lang_opt else None
 
     st.divider()
     st.markdown("### 📋 Pipeline Steps")
@@ -451,7 +466,7 @@ with tab1:
                 if enable_stt:
                     # Whisper model load can take a while on first run (download + init).
                     status_text.text("90% - Loading Whisper model (first run may take a few minutes)...")
-                    pipeline = load_pipeline(whisper_model)
+                    pipeline = load_pipeline(whisper_model, _v=2)
                     try:
                         if hasattr(pipeline, "stt") and pipeline.stt and hasattr(pipeline.stt, "_load"):
                             pipeline.stt._load()
@@ -459,12 +474,12 @@ with tab1:
                         st.warning(f"Whisper model load issue: {e}")
 
                     status_text.text("90% - Running Speech-to-Text on original audio...")
-                    transcript_orig = pipeline.stt.transcribe(raw_sig, sr_in, language="en")
+                    transcript_orig = pipeline.stt.transcribe(raw_sig, sr_in, language=asr_lang, initial_prompt=whisper_prompt)
                     
                     status_text.text("95% - Running Speech-to-Text on corrected audio...")
                     tmp_path = f"_ui_corrected_{int(time.time())}.wav"
                     sf.write(tmp_path, corrected_sig, sr_proc)
-                    transcript_corr = pipeline.stt.transcribe(corrected_sig, sr_proc, language="en")
+                    transcript_corr = pipeline.stt.transcribe(corrected_sig, sr_proc, language=asr_lang, initial_prompt=whisper_prompt)
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                 

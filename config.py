@@ -130,4 +130,4 @@ RESULTS_DIR         = "results"
 # WHISPER MODEL SIZE
 # ─────────────────────────────────────────────────────────────────────────────
 
-WHISPER_MODEL_SIZE  = "base"   # Options: tiny, base, small, medium, large
+WHISPER_MODEL_SIZE  = "small"   # Options: tiny, base, small, medium, large

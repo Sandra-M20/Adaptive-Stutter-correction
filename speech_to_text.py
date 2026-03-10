@@ -265,9 +265,10 @@ class SpeechToText:
             kwargs = {
                 "fp16": False,
                 "temperature": 0.0,
-                "beam_size": 2,  # Faster decoding
-                "best_of": 2,
+                "beam_size": 3,  # Increased slightly for accuracy
+                "best_of": 3,
                 "condition_on_previous_text": True,
+                "initial_prompt": "This is a transcription of a person with a stutter. Please normalize the output by removing repetitions and filler words.",
                 "compression_ratio_threshold": 2.2,
                 "no_speech_threshold": 0.5,
             }
@@ -284,7 +285,7 @@ class SpeechToText:
     # ------------------------------------------------------------------ #
 
     def transcribe(self, signal: np.ndarray, sr: int = TARGET_SR,
-                   language: str = None) -> str:
+                   language: str = None, initial_prompt: str = None) -> str:
         """
         Transcribe `signal` to text.
 
@@ -342,9 +343,10 @@ class SpeechToText:
             transcribe_kwargs = {
                 "fp16": False,
                 "temperature": 0.0,
-                "beam_size": 2,  # Optimized for UI speed
-                "best_of": 2,
+                "beam_size": 3,  # Balanced accuracy/speed
+                "best_of": 3,
                 "condition_on_previous_text": True,
+                "initial_prompt": initial_prompt or "This is a transcription of a person with a stutter. Please normalize the output by removing repetitions and filler words.",
                 "compression_ratio_threshold": 2.4,
                 "no_speech_threshold": 0.6,
             }
