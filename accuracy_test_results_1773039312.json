@@ -1,0 +1,77 @@
+{
+  "test_name": "85%+ Accuracy Target Test",
+  "timestamp": "2026-03-09 12:25:12",
+  "test_cases": [
+    {
+      "name": "Word Repetition Test",
+      "accuracies": {
+        "word_repetition_accuracy": 1.0,
+        "overall_accuracy": 1.0,
+        "text_similarity": 0.8333333333333334
+      },
+      "meets_85_target": true,
+      "input_length": 29,
+      "corrected_length": 29
+    },
+    {
+      "name": "Sound Repetition Test",
+      "accuracies": {
+        "word_repetition_accuracy": 1.0,
+        "overall_accuracy": 1.0,
+        "text_similarity": 0.75
+      },
+      "meets_85_target": true,
+      "input_length": 28,
+      "corrected_length": 28
+    },
+    {
+      "name": "Prolongation Test",
+      "accuracies": {
+        "word_repetition_accuracy": 1.0,
+        "overall_accuracy": 1.0,
+        "text_similarity": 1.0
+      },
+      "meets_85_target": true,
+      "input_length": 25,
+      "corrected_length": 21
+    },
+    {
+      "name": "Long Pause Test",
+      "accuracies": {
+        "word_repetition_accuracy": 1.0,
+        "overall_accuracy": 1.0,
+        "text_similarity": 0.8
+      },
+      "meets_85_target": true,
+      "input_length": 27,
+      "corrected_length": 25
+    },
+    {
+      "name": "Mixed Stuttering Test",
+      "accuracies": {
+        "word_repetition_accuracy": 1.0,
+        "overall_accuracy": 1.0,
+        "text_similarity": 0.5
+      },
+      "meets_85_target": true,
+      "input_length": 42,
+      "corrected_length": 36
+    },
+    {
+      "name": "Complex Real-World Test",
+      "accuracies": {
+        "word_repetition_accuracy": 0,
+        "overall_accuracy": 0.42857142857142855,
+        "text_similarity": 0.9940828402366864
+      },
+      "meets_85_target": false,
+      "input_length": 1945,
+      "corrected_length": 1923
+    }
+  ],
+  "overall_accuracy": 0.9047619047619048,
+  "meets_target": true,
+  "recommendations": [
+    "Improve accuracy for: Complex Real-World Test"
+  ]
+}

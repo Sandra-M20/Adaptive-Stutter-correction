@@ -1,0 +1,84 @@
+{
+  "n_clips_evaluated": 8,
+  "evaluation_time_s": 2.51,
+  "mean_duration_reduction_pct": 7.5,
+  "mean_fluency_ratio_pct": 9.38,
+  "mean_prolongation_rate": 0.8962,
+  "mean_disfluency_score": 0.8493,
+  "total_pauses_removed": 3,
+  "total_prolongations_removed": 4,
+  "clips": [
+    {
+      "clip": "M_0121_11y1m_1_dysfluent_088.wav",
+      "duration_reduction_pct": 4.17,
+      "fluency_ratio_pct": 0.0,
+      "prolongation_rate": 0.9836,
+      "disfluency_score": 0.9836,
+      "pauses_removed": 0,
+      "prolongations_removed": 1
+    },
+    {
+      "clip": "M_0030_16y4m_1_dysfluent_102.wav",
+      "duration_reduction_pct": 0.0,
+      "fluency_ratio_pct": 48.33,
+      "prolongation_rate": 0.8086,
+      "disfluency_score": 0.5669,
+      "pauses_removed": 0,
+      "prolongations_removed": 0
+    },
+    {
+      "clip": "M_1100_28y0m_1_dysfluent_111.wav",
+      "duration_reduction_pct": 11.67,
+      "fluency_ratio_pct": 0.0,
+      "prolongation_rate": 0.9499,
+      "disfluency_score": 0.9499,
+      "pauses_removed": 1,
+      "prolongations_removed": 0
+    },
+    {
+      "clip": "M_1099_25y0m_1_dysfluent_190.wav",
+      "duration_reduction_pct": 11.67,
+      "fluency_ratio_pct": 0.0,
+      "prolongation_rate": 0.9186,
+      "disfluency_score": 0.9186,
+      "pauses_removed": 1,
+      "prolongations_removed": 0
+    },
+    {
+      "clip": "M_1099_25y0m_1_dysfluent_101.wav",
+      "duration_reduction_pct": 0.0,
+      "fluency_ratio_pct": 26.67,
+      "prolongation_rate": 0.6831,
+      "disfluency_score": 0.5497,
+      "pauses_removed": 0,
+      "prolongations_removed": 0
+    },
+    {
+      "clip": "M_0121_15y1m_1_dysfluent_097.wav",
+      "duration_reduction_pct": 11.67,
+      "fluency_ratio_pct": 0.0,
+      "prolongation_rate": 0.8889,
+      "disfluency_score": 0.8889,
+      "pauses_removed": 0,
+      "prolongations_removed": 1
+    },
+    {
+      "clip": "M_0121_11y1m_1_dysfluent_051.wav",
+      "duration_reduction_pct": 20.83,
+      "fluency_ratio_pct": 0.0,
+      "prolongation_rate": 0.9716,
+      "disfluency_score": 0.9716,
+      "pauses_removed": 1,
+      "prolongations_removed": 2
+    },
+    {
+      "clip": "M_1105_21y0m_1_dysfluent_243.wav",
+      "duration_reduction_pct": 0.0,
+      "fluency_ratio_pct": 0.0,
+      "prolongation_rate": 0.9655,
+      "disfluency_score": 0.9655,
+      "pauses_removed": 0,
+      "prolongations_removed": 0
+    }
+  ]
+}

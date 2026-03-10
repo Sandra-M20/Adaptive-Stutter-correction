@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+
+# Streamlit
+.streamlit/
+
+# Project Specific
+archive/audio/
+archive/intermediate/
+archive/clips/
+output/
+model/*.json
+!model/maml_params.json
+*.wav
+*.pdf
+streamlit.out.log
+streamlit.err.log
+temp_res.txt
+temp_res_2.txt
+temp_res_3.txt
+temp_res_4.txt
+
+# Antigravity/Cursor
+.gemini/
+.agents/
+.windsurf/
+brain/

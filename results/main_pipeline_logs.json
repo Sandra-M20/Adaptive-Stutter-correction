@@ -1,0 +1,76 @@
+{
+  "params": {
+    "energy_threshold": 0.01,
+    "noise_threshold": 0.01,
+    "pause_threshold_s": 0.5,
+    "correlation_threshold": 14.0
+  },
+  "stats": {
+    "speech_pct": 0.0,
+    "pauses_found": 0.0,
+    "pause_frames_removed": 0.0,
+    "prolongation_events": 7.0,
+    "prolong_frames_removed": 8.0,
+    "duration_reduction_pct": 4.216175359032503,
+    "input_duration_s": 3.0,
+    "output_duration_s": 2.873514739229025,
+    "runtime_s": 19.742961168289185
+  },
+  "iterations": [
+    {
+      "iteration": 1,
+      "score": 0.00033740359016749604,
+      "loss": 0.9996625964098325,
+      "energy_threshold": 0.01,
+      "noise_threshold": 0.01,
+      "pause_threshold_s": 0.5,
+      "correlation_threshold": 14.0
+    },
+    {
+      "iteration": 2,
+      "score": 0.00033740359016749604,
+      "loss": 0.9996625964098325,
+      "energy_threshold": 0.01,
+      "noise_threshold": 0.01,
+      "pause_threshold_s": 0.5,
+      "correlation_threshold": 14.0
+    },
+    {
+      "iteration": 3,
+      "score": 0.00033740359016749604,
+      "loss": 0.9996625964098325,
+      "energy_threshold": 0.01,
+      "noise_threshold": 0.01,
+      "pause_threshold_s": 0.5,
+      "correlation_threshold": 14.0
+    },
+    {
+      "iteration": 4,
+      "score": 0.00033740359016749604,
+      "loss": 0.9996625964098325,
+      "energy_threshold": 0.01,
+      "noise_threshold": 0.01,
+      "pause_threshold_s": 0.5,
+      "correlation_threshold": 14.0
+    },
+    {
+      "iteration": 5,
+      "score": 0.00033740359016749604,
+      "loss": 0.9996625964098325,
+      "energy_threshold": 0.01,
+      "noise_threshold": 0.01,
+      "pause_threshold_s": 0.5,
+      "correlation_threshold": 14.0
+    },
+    {
+      "iteration": 6,
+      "score": 0.00033740359016749604,
+      "loss": 0.9996625964098325,
+      "energy_threshold": 0.01,
+      "noise_threshold": 0.01,
+      "pause_threshold_s": 0.5,
+      "correlation_threshold": 14.0
+    }
+  ],
+  "output_path": "output/corrected_main_pipeline.wav"
+}
