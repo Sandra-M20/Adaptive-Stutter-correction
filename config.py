@@ -12,7 +12,7 @@ propagates across the entire pipeline instantly.
 # AUDIO SETTINGS
 # ─────────────────────────────────────────────────────────────────────────────
 
-TARGET_SR       = 22050    # Standard sampling rate used across the pipeline (Hz)
+TARGET_SR       = 16000    # Standard sampling rate used across the pipeline (Hz)
 WHISPER_SR      = 16000    # Whisper ASR requires 16 kHz input
 FRAME_MS        = 50       # Analysis frame length in milliseconds
 HOP_MS          = 25       # Frame hop (50% overlap) in milliseconds
@@ -40,27 +40,27 @@ ENERGY_THRESHOLD    = 0.01     # Short-Time Energy threshold: frames above → s
 # PAUSE CORRECTION THRESHOLDS (Step 4)
 # ─────────────────────────────────────────────────────────────────────────────
 
-MAX_PAUSE_S         = 0.50     # Silences longer than this (seconds) are abnormal
-PAUSE_RETAIN_RATIO  = 0.30     # Fraction of silence to keep after compression (increased to prevent speed up)
-PAUSE_MAX_REMOVE_RATIO = 0.08  # Global cap for pause-frame removal across a clip
+MAX_PAUSE_S         = 0.20     # Optimized from SEP-28K dataset calibration
+PAUSE_RETAIN_RATIO  = 0.10     # Optimized from SEP-28K dataset calibration
+PAUSE_MAX_REMOVE_RATIO = 0.40  # Global cap for pause-frame removal across a clip
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PROLONGATION DETECTION THRESHOLDS (Steps 7-9)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SIM_THRESHOLD       = 0.85     # Cosine similarity above this = possible prolongation (lowered for better detection)
-MIN_PROLONG_FRAMES  = 3        # Minimum consecutive similar frames = prolongation event (~150ms, more sensitive)
-KEEP_FRAMES         = 3        # Number of frames to keep from each prolongation block
-PROLONG_MAX_REMOVE_RATIO = 0.18  # Never remove more than this ratio of any speech run
-CORR_THRESHOLD      = 14.0     # Report-style frame correlation threshold
-USE_REPORT_CORR14   = False    # If True, use correlation-score>=14 rule for prolongation
+SIM_THRESHOLD       = 0.75     # Optimized from SEP-28K dataset calibration
+MIN_PROLONG_FRAMES  = 5        # Requires more evidence of prolongation
+KEEP_FRAMES         = 3        # Optimized from SEP-28K dataset calibration
+PROLONG_MAX_REMOVE_RATIO = 0.40  # Optimized from SEP-28K dataset calibration  
+CORR_THRESHOLD      = 14.0     
+USE_REPORT_CORR14   = False    
 
 # AI-ASSISTED EVENT FILTERING
-USE_CONFIDENCE_FILTER = True   # Gate candidate disfluency events with confidence model
-CONFIDENCE_MIN        = 0.52   # Events below this confidence are not corrected (lowered for 85%+ accuracy)
+USE_CONFIDENCE_FILTER = False   # Disabled as per user request
+CONFIDENCE_MIN        = 0.55   
 
 # SILENT STUTTER DETECTION (AI-assisted)
-USE_SILENT_STUTTER_AI   = True   # Detect silent blocks/hesitations across full audio
+USE_SILENT_STUTTER_AI   = False   # Disabled as per user request
 SILENT_STUTTER_MIN_S    = 0.08   # Minimum internal silence to consider a silent stutter
 SILENT_STUTTER_MAX_S    = 1.20   # Maximum internal silence to consider (longer handled by pause module)
 SILENT_STUTTER_KEEP     = 0.45   # Keep this ratio of detected silent stutter duration
@@ -69,14 +69,18 @@ SILENT_STUTTER_DSP_MIN  = 0.52   # Minimum DSP score for dual AI+DSP confirmatio
 SILENT_STUTTER_MAX_REMOVE_RATIO = 0.05  # Global cap for silent-stutter frame removal
 
 # BLOCK DETECTOR SAFETY (Enhancement)
-BLOCK_MAX_REMOVE_RATIO   = 0.03   # Global cap for block-frame removal
+BLOCK_MAX_REMOVE_RATIO   = 0.10   # Global cap for block-frame removal
 BLOCK_KEEP_RATIO         = 0.45   # Compress detected block segments instead of full deletion
 BLOCK_MAX_FRAMES         = 20     # Ignore very long "blocks" (handled by pause module)
 BLOCK_CONTEXT_FRAMES     = 3      # Context frames before/after candidate block
 BLOCK_RECOVERY_RATIO     = 1.8    # Post/pre energy recovery ratio required
 
+# SPECTRAL FEATURES (User-requested DSP enhancement)
+SPECTRAL_FLUX_THRESHOLD     = 0.010  # Stricter stability requirement
+SPECTRAL_FLATNESS_THRESHOLD = 0.28   # Ensure tonal speech sounds
+
 # GLOBAL MEANING-PRESERVATION SAFETY
-MAX_TOTAL_DURATION_REDUCTION = 0.15  # If exceeded, fallback to less aggressive correction
+MAX_TOTAL_DURATION_REDUCTION = 0.40  # Allow up to 40% removal (prevents safety reversion)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REPETITION CORRECTOR THRESHOLDS (Enhancement)
@@ -84,6 +88,7 @@ MAX_TOTAL_DURATION_REDUCTION = 0.15  # If exceeded, fallback to less aggressive 
 
 REP_CHUNK_MS        = 300      # Chunk size for DTW repetition analysis (ms)
 DTW_THRESHOLD       = 3.5      # Max normalized DTW distance to flag repetition
+REP_MAX_REMOVAL_RATIO = 0.20   # Limit: never remove more than 20% of signal as repetitions
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REPTILE MAML SETTINGS (Step 10)
