@@ -1,0 +1,61 @@
+{
+  "validation_timestamp": "2026-03-12T04:18:05.967916",
+  "summary_stats": {
+    "total_files": 4730,
+    "clean_files": 0,
+    "noisy_files": 0,
+    "stuttered_files": 0,
+    "synthetic_files": 0,
+    "validation_results": {
+      "unknown": [
+        "FileValidationResult(filename='Archive\\\\audio\\\\M_0030_16y4m_1.wav', file_type='unknown', native_format={}, results=[ValidationResult(test_name='file_validation', passed=False, details={}, error_message='cannot unpack non-iterable ValidationResult object')], visualizations={}, summary_stats={})",
+        "FileValidationResult(filename='Archive\\\\audio\\\\M_0061_16y9m-1.wav', file_type='unknown', native_format={}, results=[ValidationResult(test_name='file_validation', passed=False, details={}, error_message='cannot unpack non-iterable ValidationResult object')], visualizations={}, summary_stats={})",
+        "FileValidationResult(filename='Archive\\\\audio\\\\M_0078_16y5m_1.wav', file_type='unknown', native_format={}, results=[ValidationResult(test_name='file_validation', passed=False, details={}, error_message='cannot unpack non-iterable ValidationResult object')], visualizations={}, summary_stats={})"
+      ]
+    }
+  },
+  "detailed_results": [
+    {
+      "filename": "Archive\\audio\\M_0030_16y4m_1.wav",
+      "file_type": "unknown",
+      "tests_passed": 0,
+      "total_tests": 1,
+      "summary_stats": {},
+      "test_details": [
+        {
+          "test_name": "file_validation",
+          "passed": false,
+          "error_message": "cannot unpack non-iterable ValidationResult object"
+        }
+      ]
+    },
+    {
+      "filename": "Archive\\audio\\M_0061_16y9m-1.wav",
+      "file_type": "unknown",
+      "tests_passed": 0,
+      "total_tests": 1,
+      "summary_stats": {},
+      "test_details": [
+        {
+          "test_name": "file_validation",
+          "passed": false,
+          "error_message": "cannot unpack non-iterable ValidationResult object"
+        }
+      ]
+    },
+    {
+      "filename": "Archive\\audio\\M_0078_16y5m_1.wav",
+      "file_type": "unknown",
+      "tests_passed": 0,
+      "total_tests": 1,
+      "summary_stats": {},
+      "test_details": [
+        {
+          "test_name": "file_validation",
+          "passed": false,
+          "error_message": "cannot unpack non-iterable ValidationResult object"
+        }
+      ]
+    }
+  ]
+}

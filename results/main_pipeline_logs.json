@@ -1,76 +1,78 @@
 {
   "params": {
-    "energy_threshold": 0.01,
-    "noise_threshold": 0.01,
-    "pause_threshold_s": 0.5,
-    "correlation_threshold": 14.0
+    "energy_threshold": 0.010002868472337481,
+    "noise_threshold": 0.01002043188779793,
+    "pause_threshold_s": 0.30020989294054595,
+    "correlation_threshold": 0.8485193941892939,
+    "max_remove_ratio": 0.40244397241330204
   },
   "stats": {
-    "speech_pct": 0.0,
+    "speech_pct": 32.66129032258064,
     "pauses_found": 0.0,
     "pause_frames_removed": 0.0,
-    "prolongation_events": 7.0,
-    "prolong_frames_removed": 8.0,
-    "duration_reduction_pct": 4.216175359032503,
+    "silent_stutters_removed": 0.0,
+    "silent_stutter_frames_removed": 0.0,
+    "prolongation_events": 0.0,
+    "prolong_frames_removed": 0.0,
+    "repetitions_removed": 1.0,
+    "duration_reduction_pct": 23.033333333333328,
+    "detection_events": {
+      "pauses": [],
+      "prolongations": [],
+      "repetitions": [
+        {
+          "start_sample": 0,
+          "end_sample": 4480,
+          "duration_s": 0.28
+        }
+      ]
+    },
     "input_duration_s": 3.0,
-    "output_duration_s": 2.873514739229025,
-    "runtime_s": 19.742961168289185
+    "output_duration_s": 2.309,
+    "runtime_s": 3.480362892150879
   },
   "iterations": [
     {
       "iteration": 1,
-      "score": 0.00033740359016749604,
-      "loss": 0.9996625964098325,
-      "energy_threshold": 0.01,
-      "noise_threshold": 0.01,
-      "pause_threshold_s": 0.5,
-      "correlation_threshold": 14.0
+      "score": 0.004555302774289832,
+      "loss": 0.9954446972257102,
+      "energy_threshold": 0.010028684723374806,
+      "noise_threshold": 0.010204318877979306,
+      "pause_threshold_s": 0.3020989294054596,
+      "correlation_threshold": 0.8351939418929389,
+      "max_remove_ratio": 0.4244397241330202
     },
     {
       "iteration": 2,
-      "score": 0.00033740359016749604,
-      "loss": 0.9996625964098325,
-      "energy_threshold": 0.01,
-      "noise_threshold": 0.01,
-      "pause_threshold_s": 0.5,
-      "correlation_threshold": 14.0
+      "score": 0.004555302774289832,
+      "loss": 0.9954446972257102,
+      "energy_threshold": 0.010269147759772513,
+      "noise_threshold": 0.010109390954768347,
+      "pause_threshold_s": 0.30712660011996357,
+      "correlation_threshold": 0.8120107663807977,
+      "max_remove_ratio": 0.416014725955829
     },
     {
       "iteration": 3,
-      "score": 0.00033740359016749604,
-      "loss": 0.9996625964098325,
-      "energy_threshold": 0.01,
-      "noise_threshold": 0.01,
-      "pause_threshold_s": 0.5,
-      "correlation_threshold": 14.0
+      "score": 0.004555302774289832,
+      "loss": 0.9954446972257102,
+      "energy_threshold": 0.010267797660583264,
+      "noise_threshold": 0.00994550630879144,
+      "pause_threshold_s": 0.3065583290134305,
+      "correlation_threshold": 0.807236558908143,
+      "max_remove_ratio": 0.40866537859772534
     },
     {
       "iteration": 4,
-      "score": 0.00033740359016749604,
-      "loss": 0.9996625964098325,
-      "energy_threshold": 0.01,
-      "noise_threshold": 0.01,
-      "pause_threshold_s": 0.5,
-      "correlation_threshold": 14.0
-    },
-    {
-      "iteration": 5,
-      "score": 0.00033740359016749604,
-      "loss": 0.9996625964098325,
-      "energy_threshold": 0.01,
-      "noise_threshold": 0.01,
-      "pause_threshold_s": 0.5,
-      "correlation_threshold": 14.0
-    },
-    {
-      "iteration": 6,
-      "score": 0.00033740359016749604,
-      "loss": 0.9996625964098325,
-      "energy_threshold": 0.01,
-      "noise_threshold": 0.01,
-      "pause_threshold_s": 0.5,
-      "correlation_threshold": 14.0
+      "score": 0.004555302774289832,
+      "loss": 0.9954446972257102,
+      "energy_threshold": 0.010245522053039625,
+      "noise_threshold": 0.009931080584269685,
+      "pause_threshold_s": 0.30814690315443505,
+      "correlation_threshold": 0.7985883424190748,
+      "max_remove_ratio": 0.40449439135230836
     }
   ],
-  "output_path": "output/corrected_main_pipeline.wav"
+  "output_path": "output/verification_fixed_v2.wav",
+  "transcript": ""
 }

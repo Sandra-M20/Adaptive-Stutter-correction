@@ -100,13 +100,14 @@ class SpeechSegmenter:
 
         # Pass 2: Label frames using energy threshold OR ZCR (catches unvoiced consonants)
         for energy, zcr in zip(energies, zcrs):
-            if energy > self.energy_threshold or zcr > 0.08:
+            if energy > self.energy_threshold or zcr > 0.15:
                 label = "speech"
             else:
                 label = "silence"
             labels.append(label)
 
-        labels = self._smooth_labels(labels, min_run=2)
+        labels = self._smooth_labels(labels, min_run=3)
+        labels = self._clean_quiet_islands(frames, labels)
 
         n_speech  = labels.count("speech")
         n_silence = labels.count("silence")
@@ -172,3 +173,40 @@ class SpeechSegmenter:
         thr = float(np.percentile(valid, percentile)) if len(valid) > 0 else ENERGY_THRESHOLD
         print(f"[Segmentation] Adaptive threshold (p{percentile:.0f}): {thr:.6f}")
         return thr
+
+    def _clean_quiet_islands(self, frames, labels):
+        """
+        Identify short (<100ms) quiet speech pulses and convert to silence.
+        This allows the SilentStutterDetector to catch them.
+        """
+        if not frames:
+            return labels
+        new_labels = list(labels)
+        frame_ms = (len(frames[0]) / self.sr) * 1000
+        max_island_frames = max(1, int(100 / frame_ms))
+        
+        i = 0
+        while i < len(new_labels):
+            if new_labels[i] != "speech":
+                i += 1
+                continue
+            
+            s = i
+            while i < len(new_labels) and new_labels[i] == "speech":
+                i += 1
+            e = i
+            
+            if (e - s) <= max_island_frames:
+                # Check peak energy of this island
+                island_frames = frames[s:e]
+                peak_e = np.max([np.mean(f**2) for f in island_frames])
+                
+                # If peak energy is quite low
+                if peak_e < (self.energy_threshold * 1.2):
+                    for j in range(s, e):
+                        new_labels[j] = "silence"
+            
+            # Ensure i always advances past the speech island to avoid infinite loop
+            i = e
+        
+        return new_labels

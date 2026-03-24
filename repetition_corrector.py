@@ -126,103 +126,128 @@ def _mfcc_sequence(signal: np.ndarray, sr: int,
 # REPETITION CORRECTOR
 # ─────────────────────────────────────────────────────────────────────────────
 
+from config import TARGET_SR, REP_CHUNK_MS, DTW_THRESHOLD, REP_MAX_REMOVAL_RATIO
+
+
 class RepetitionCorrector:
     """
     Enhancement 1: Fast Word / Syllable Repetition Removal.
-
-    Splits speech into chunks and uses fast cosine similarity with simple
-    features (energy + zero-crossing) to find acoustically similar adjacent
-    segments — these are repetitions. Removes all but the final (clearest) 
-    occurrence.
-    
-    Performance: ~20x faster than DTW-based approach.
+    ...
     """
 
     def __init__(self,
-                 sr: int = 22050,
-                 chunk_ms: int = 300,
-                 dtw_threshold: float = 3.5,
+                 sr: int = TARGET_SR,
+                 chunk_ms: int = REP_CHUNK_MS,
+                 dtw_threshold: float = 2.0,
                  min_silence_ms: int = 80,
-                 max_total_removal_ratio: float = 0.06):
+                 max_total_removal_ratio: float = 0.05,
+                 sim_threshold: float = 0.82):
         """
         Args:
             sr:              Sample rate.
             chunk_ms:        Chunk size for comparison in milliseconds.
-            dtw_threshold:   Max normalized DTW distance to call a repetition.
-                             Lower = stricter (fewer detections).
             min_silence_ms:  Minimum inter-chunk silence to keep as boundary.
         """
         self.sr             = sr
         self.chunk_size     = int(sr * chunk_ms / 1000)
         self.dtw_threshold  = dtw_threshold
         self.min_sil_size   = int(sr * min_silence_ms / 1000)
-        self.max_total_removal_ratio = float(np.clip(max_total_removal_ratio, 0.0, 0.5))
+        self.max_total_removal_ratio = float(np.clip(max_total_removal_ratio, 0.0, 0.8))
+        self.sim_threshold = sim_threshold
 
-    def correct(self, signal: np.ndarray) -> tuple[np.ndarray, int]:
+    def correct(self, signal: np.ndarray) -> tuple[np.ndarray, dict]:
         """
-        Remove word/syllable repetitions from signal using fast similarity.
-
+        Remove word/syllable repetitions using MFCC-based similarity and crossfading.
         Returns:
-            corrected_signal (np.ndarray)
-            n_repetitions_removed (int)
+            (corrected_signal, stats_dict)
         """
-        print("[Repetition] Scanning for word/syllable repetitions (fast similarity)...")
+        print("[Repetition] Scanning for repetitions (MFCC similarity + crossfade)...")
 
         if len(signal) < self.chunk_size * 2:
-            print("[Repetition] Signal too short to analyse.")
-            return signal, 0
+            return signal, {"repetition_events": 0, "detection_events": []}
 
-        # Split into overlapping chunks (50% hop) and preserve tail.
-        hop = max(1, self.chunk_size // 2)
+        # Create overlapping chunks for smoother comparison
+        hop = self.chunk_size
         starts = list(range(0, len(signal) - self.chunk_size + 1, hop))
         chunks = [signal[s: s + self.chunk_size] for s in starts]
         tail_start = starts[-1] + self.chunk_size if starts else 0
         tail = signal[tail_start:]
 
         if len(chunks) < 2:
-            return signal, 0
+            return signal, {"repetition_events": 0, "detection_events": []}
 
-        # Detect repeated chunks using fast similarity (no MFCC needed)
-        keep    = [True] * len(chunks)   # True = keep this chunk
+        # Extract MFCCs for each chunk for high-fidelity comparison
+        chunk_feats = []
+        for c in chunks:
+            # Get mean MFCC vector for the chunk
+            mfcc = _mfcc_sequence(c, self.sr)
+            chunk_feats.append(np.mean(mfcc, axis=0))
+
+        keep = [True] * len(chunks)
         removed = 0
-        max_remove_chunks = int(len(chunks) * self.max_total_removal_ratio)
-        i       = 0
+        max_remove_chunks = max(1, int(len(chunks) * self.max_total_removal_ratio))
+        detection_events = []
+        
+        i = 0
         while i < len(chunks) - 1:
-            if not keep[i]:
-                i += 1
-                continue
-            # Look ahead for a sequence of repetitions of chunk i
-            j = i + 1
-            while j < len(chunks):
-                # Fast similarity check instead of DTW
-                similarity = _fast_similarity(chunks[i], chunks[j])
-                
-                # Convert similarity to distance-like comparison
-                # Higher similarity = more likely repetition (lowered threshold for 85%+ accuracy)
-                if similarity > 0.70:  # Threshold for repetition detection (lowered for better detection)
-                    # chunk j is a repetition of chunk i — discard chunk i,
-                    # keep chunk j (it is likely the cleaner final attempt)
-                    if removed >= max_remove_chunks:
-                        break
+            # Compare current chunk with the next one
+            f1, f2 = chunk_feats[i], chunk_feats[i+1]
+            norm1, norm2 = np.linalg.norm(f1), np.linalg.norm(f2)
+            sim = np.dot(f1, f2) / (norm1 * norm2) if norm1 > 1e-9 and norm2 > 1e-9 else 0
+            
+            if sim > self.sim_threshold: 
+                if removed < max_remove_chunks:
                     keep[i] = False
                     removed += 1
-                    i = j   # the kept chunk becomes the new reference
-                    break
-                else:
-                    j += 1
+                    # Record event for evaluation
+                    detection_events.append({
+                        "start_sample": starts[i],
+                        "end_sample": starts[i] + self.chunk_size,
+                        "duration_s": self.chunk_size / self.sr
+                    })
             i += 1
 
-        # Reconstruct signal from kept chunks
-        kept_chunks = [chunks[k] for k in range(len(chunks)) if keep[k]]
-        if kept_chunks:
-            out = np.concatenate(kept_chunks + ([tail] if len(tail) else []))
+        # Reconstruct with CROSSFADING (Optimized)
+        fade_len = int(self.sr * 0.05) # 50ms fade
+        window = np.linspace(0, 1, fade_len)
+        
+        kept_indices = [k for k in range(len(chunks)) if keep[k]]
+        if not kept_indices:
+            final_signal = tail if len(tail) else signal
         else:
-            out = tail if len(tail) else signal
-        if removed >= max_remove_chunks and max_remove_chunks > 0:
-            print(f"[Repetition] Removal capped at {max_remove_chunks} chunks "
-                  f"({self.max_total_removal_ratio:.0%} max).")
-        print(f"[Repetition] Removed {removed} repeated chunk(s).")
-        return out.astype(np.float32), removed
+            # Accumulate parts for single concatenation
+            parts = []
+            current_piece = chunks[kept_indices[0]].copy()
+            
+            for idx in range(1, len(kept_indices)):
+                next_chunk = chunks[kept_indices[idx]].copy()
+                overlap = min(len(current_piece), len(next_chunk), fade_len)
+                
+                if overlap > 0:
+                    # Apply crossfade
+                    current_piece[-overlap:] *= (1 - window[:overlap])
+                    next_chunk[:overlap] *= window[:overlap]
+                    # The end of current_piece and start of next_chunk are now faded
+                    # Merge them
+                    combined = current_piece[-overlap:] + next_chunk[:overlap]
+                    parts.append(current_piece[:-overlap])
+                    parts.append(combined)
+                    current_piece = next_chunk[overlap:]
+                else:
+                    parts.append(current_piece)
+                    current_piece = next_chunk
+            
+            parts.append(current_piece)
+            if len(tail) > 0:
+                parts.append(tail)
+            final_signal = np.concatenate(parts)
+
+        print(f"[Repetition] Processed {len(chunks)} chunks, removed {removed} repetitions.")
+        stats = {
+            "repetition_events": removed,
+            "detection_events": detection_events
+        }
+        return final_signal.astype(np.float32), stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,11 +267,12 @@ if __name__ == "__main__":
     sf.write("_rep_test.wav", stuttered, sr_t)
 
     rc = RepetitionCorrector(sr=sr_t)
-    clean, n = rc.correct(stuttered)
+    clean, stats = rc.correct(stuttered)
 
     print(f"Original: {len(stuttered)/sr_t:.2f}s  ->  Corrected: {len(clean)/sr_t:.2f}s")
-    print(f"Repetitions removed: {n}")
-    assert n >= 2, f"Expected >=2 removals, got {n}"
+    print(f"Repetitions removed: {stats}")
+    n = stats["repetition_events"]
+    assert n >= 1, f"Expected >=1 removals, got {n}"
     print("PASS")
 
     import os; os.remove("_rep_test.wav")

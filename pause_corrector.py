@@ -75,6 +75,7 @@ class PauseCorrector:
         new_frames, new_labels = [], []
         pauses_found = 0
         frames_removed = 0
+        detection_events = [] # For evaluation
         max_total_remove = int(len(frames) * self.max_total_removal_ratio)
         i = 0
 
@@ -102,6 +103,14 @@ class PauseCorrector:
                     keep_n = max(keep_n, run_len - remaining_budget)
                     new_frames.extend(frames[run_start: run_start + keep_n])
                     new_labels.extend(["silence"] * keep_n)
+                    
+                    # Record event for evaluation
+                    detection_events.append({
+                        "start_frame": run_start,
+                        "end_frame": i,
+                        "duration_s": run_len * self.hop_ms / 1000
+                    })
+                    
                     pauses_found  += 1
                     frames_removed += (run_len - keep_n)
                 else:
@@ -124,6 +133,7 @@ class PauseCorrector:
             "pauses_found":    pauses_found,
             "frames_removed":  frames_removed,
             "duration_removed_s": pause_dur_removed,
+            "detection_events": detection_events, # Added for evaluation
         }
         return new_frames, new_labels, stats
 

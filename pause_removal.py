@@ -22,9 +22,9 @@ class LongPauseRemover:
         sr: int,
         frame_ms: int = 30,
         hop_ms: int = 15,
-        pause_threshold_s: float = 0.5,
-        retain_ratio: float = 0.25,
-        max_total_removal_ratio: float = 0.10,
+        pause_threshold_s: float = 0.25,
+        retain_ratio: float = 0.10,
+        max_total_removal_ratio: float = 0.40,
     ):
         self.corrector = PauseCorrector(
             sr=sr,

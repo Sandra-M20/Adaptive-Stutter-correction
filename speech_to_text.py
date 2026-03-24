@@ -84,13 +84,11 @@ class SpeechToText:
 
         Returns
         -------
-        mel_spec : np.ndarray shape (80, 3000) — exactly what Whisper expects
+        mel_spec : np.ndarray shape (80, T) — mel spectrogram for the chunk
         """
-        # Pad or trim to exactly 30 seconds
-        if len(audio) > WHISPER_N_SAMPLES:
-            audio = audio[:WHISPER_N_SAMPLES]
-        else:
-            audio = np.pad(audio, (0, WHISPER_N_SAMPLES - len(audio)))
+        # NO LONGER PADDING/TRIMMING TO 30S HERE.
+        # Whisper's native transcribe() handles variable lengths.
+        # Manual decode() loop in transcribe() handles chunks.
 
         # Build mel filterbank (cached)
         if self._banks is None:
@@ -99,8 +97,13 @@ class SpeechToText:
         # STFT
         window = np.hanning(WHISPER_N_FFT)
         frames = []
+        # Support variable length audio
         for s in range(0, len(audio) - WHISPER_N_FFT + 1, WHISPER_HOP):
             frames.append(np.fft.rfft(audio[s:s + WHISPER_N_FFT] * window))
+        
+        if not frames:
+            return np.zeros((80, 1), dtype=np.float32)
+            
         S  = np.array(frames)                    # (T, F)
         S2 = np.abs(S) ** 2                      # power spectrum
 
@@ -110,12 +113,6 @@ class SpeechToText:
 
         # Normalize to [-1, 0] range (Whisper convention)
         mel = (mel - mel.max()) / 4.0 + 1.0
-
-        # Trim / pad to 3000 time steps
-        if mel.shape[1] > 3000:
-            mel = mel[:, :3000]
-        else:
-            mel = np.pad(mel, ((0, 0), (0, 3000 - mel.shape[1])))
 
         return mel.astype(np.float32)
 
@@ -299,15 +296,6 @@ class SpeechToText:
         sr       : int        — current sample rate of signal
         language : str | None — ISO language code ('en','ar','ta','fr'...) or
                                 None for automatic language detection.
-
-        Supported languages (99 total):
-          English (en), Arabic (ar), Tamil (ta), Hindi (hi),
-          French (fr), German (de), Japanese (ja), Mandarin (zh),
-          Spanish (es), Russian (ru), ... and 89 more.
-
-        Returns
-        -------
-        text : str — transcribed text with auto-detected language tag
         """
         if not self._load():
             return "[STT unavailable — Whisper model could not be loaded]"
@@ -326,7 +314,7 @@ class SpeechToText:
 
         try:
             import whisper, torch
-            # Long-form path: use Whisper's native transcribe() for up to 5 minutes.
+            # Long-form path: use Whisper's native transcribe() for larger files.
             # Manual chunking is only for extremely long files (>300s).
             if len(audio) / WHISPER_SR >= 300.0:
                 text = self._transcribe_longform(audio, language=language)
@@ -339,7 +327,9 @@ class SpeechToText:
                 return text
 
             # Primary path: use Whisper's native transcribe() on in-memory audio.
-            # This is substantially more robust than manual decode() for long/noisy speech.
+            # Adjusting thresholds: 
+            # - compression_ratio_threshold: 2.4 -> 2.8 (allow more repetition which is common in stuttering)
+            # - no_speech_threshold: 0.6 -> 0.8 (be more patient with silences/hesitations)
             transcribe_kwargs = {
                 "fp16": False,
                 "temperature": 0.0,
@@ -347,8 +337,8 @@ class SpeechToText:
                 "best_of": 3,
                 "condition_on_previous_text": True,
                 "initial_prompt": initial_prompt or "This is a transcription of a person with a stutter. Please normalize the output by removing repetitions and filler words.",
-                "compression_ratio_threshold": 2.4,
-                "no_speech_threshold": 0.6,
+                "compression_ratio_threshold": 2.8,
+                "no_speech_threshold": 0.8,
             }
             if language is not None:
                 transcribe_kwargs["language"] = language
@@ -358,6 +348,7 @@ class SpeechToText:
                 text = self._normalize_text(result.get("text", "") if isinstance(result, dict) else "")
                 text = self._clean_repetition_loops(text)
                 used_language = (result.get("language") if isinstance(result, dict) else None) or (language or "en")
+                
                 if language is None and self._is_loop_hallucination(text):
                     # One retry with language lock to avoid multilingual loop drift.
                     retry_kwargs = dict(transcribe_kwargs)
@@ -369,6 +360,7 @@ class SpeechToText:
                     if retry_text and not self._is_loop_hallucination(retry_text):
                         text = retry_text
                         used_language = "en"
+                
                 if text:
                     tokens = text.split()
                     if len(tokens) > 5:
@@ -377,10 +369,11 @@ class SpeechToText:
                             text = "[No clear speech detected in this audio segment]"
                     print(f"[STT] [{used_language}] '{text}'")
                     return text
-                print("[STT] Native transcribe() returned empty text. Falling back to decode().")
+                print("[STT] Native transcribe() returned empty text. Falling back to manual decode().")
             except Exception as e:
-                print(f"[STT] Native transcribe() failed: {e}. Falling back to decode().")
+                print(f"[STT] Native transcribe() failed: {e}. Falling back to manual decode().")
 
+            # Fallback for manual decoding in chunks
             chunks = [
                 audio[s:s + WHISPER_N_SAMPLES]
                 for s in range(0, len(audio), WHISPER_N_SAMPLES)
@@ -397,6 +390,12 @@ class SpeechToText:
                         continue
 
                     mel = self._numpy_mel_spectrogram(chunk)
+                    # Whisper expects exactly 3000 windows for its encoding segment.
+                    if mel.shape[1] > 3000:
+                        mel = mel[:, :3000]
+                    else:
+                        mel = np.pad(mel, ((0, 0), (0, 3000 - mel.shape[1])))
+                        
                     mel_tensor = torch.from_numpy(mel).unsqueeze(0)   # (1, 80, 3000)
 
                     # Detect language on first valid chunk if not specified.
@@ -413,13 +412,10 @@ class SpeechToText:
                         if p_dict:
                             best_lang = max(p_dict, key=p_dict.get)
                             conf = float(p_dict[best_lang])
-                            # Low-confidence language guesses are unstable on noisy speech.
                             used_language = best_lang if conf >= 0.45 else "en"
-                            print(f"[STT] Auto-detected language: '{best_lang}' "
-                                  f"(confidence={conf:.2f}) -> using '{used_language}'")
+                            print(f"[STT] Auto-detected language: '{best_lang}' (conf={conf:.2f})")
                         else:
                             used_language = "en"
-                            print("[STT] Warning: Could not parse language probs. Using 'en'.")
 
                     options_kwargs = {
                         "language": used_language,
@@ -427,8 +423,8 @@ class SpeechToText:
                         "fp16": False,
                     }
                     extra_kwargs = {
-                        "compression_ratio_threshold": 2.4,
-                        "no_speech_threshold": 0.6,
+                        "compression_ratio_threshold": 2.8,
+                        "no_speech_threshold": 0.8,
                         "condition_on_previous_text": False,
                     }
                     try:
@@ -441,22 +437,14 @@ class SpeechToText:
                     text = (text or "").strip()
                     text = re.sub(r"<\\|[^|]+\\|>", " ", text)
                     text = " ".join(text.split())
-                    if not text:
-                        continue
-
-                    # Skip common low-information outputs that appear on weak chunks.
-                    if text in {"...", ".", ",", "-", "--"} or len(text) <= 1:
-                        continue
-
-                    tokens = text.split()
-                    if len(tokens) > 5:
-                        unique_ratio = len(set(tokens)) / len(tokens)
-                        if unique_ratio < 0.15:
-                            print(f"[STT] Chunk {ci+1}: hallucination filtered "
-                                  f"(unique_ratio={unique_ratio:.2f}).")
-                            continue
-
-                    texts.append(text)
+                    
+                    if text and not (text in {"...", ".", ",", "-", "--"} or len(text) <= 1):
+                        tokens = text.split()
+                        if len(tokens) > 5:
+                            unique_ratio = len(set(tokens)) / len(tokens)
+                            if unique_ratio < 0.15:
+                                continue
+                        texts.append(text)
 
             final_text = " ".join(texts).strip()
             final_text = self._clean_repetition_loops(final_text)
@@ -466,7 +454,7 @@ class SpeechToText:
             print(f"[STT] [{used_language or 'en'}] '{final_text}'")
             return final_text
         except Exception as e:
-            print(f"[STT] Decoding error: {e}")
+            print(f"[STT] Error: {e}")
             return f"[STT error: {e}]"
 
     # ------------------------------------------------------------------ #

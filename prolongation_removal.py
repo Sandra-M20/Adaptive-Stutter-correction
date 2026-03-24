@@ -26,10 +26,10 @@ class ProlongationRemover:
         self,
         sr: int,
         hop_ms: int = 20,
-        correlation_threshold: float = 0.94,
-        min_prolong_frames: int = 7,
-        keep_frames: int = 4,
-        max_remove_ratio: float = 0.10,
+        correlation_threshold: float = 0.75,
+        min_prolong_frames: int = 5,
+        keep_frames: int = 3,
+        max_remove_ratio: float = 0.40,
         use_report_corr14: bool = False,
     ):
         self.corrector = ProlongationCorrector(

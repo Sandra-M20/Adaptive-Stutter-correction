@@ -1,0 +1,13 @@
+faster-whisper
+transformers
+groq
+streamlit
+torch
+torchaudio
+librosa
+numpy
+scipy
+soundfile
+pydantic
+python-dotenv
+pytest

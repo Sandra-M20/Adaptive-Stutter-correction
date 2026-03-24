@@ -36,8 +36,9 @@ class AdaptiveReptileLearner:
         self.default_params = {
             "energy_threshold": 0.01,
             "noise_threshold": 0.01,
-            "pause_threshold_s": 0.5,
-            "correlation_threshold": 0.93,
+            "pause_threshold_s": 0.25,
+            "correlation_threshold": 0.75,
+            "max_remove_ratio": 0.40,
         }
 
     def _mfcc_matrix(self, signal: np.ndarray, sr: int, frame_ms: int = 25, hop_ms: int = 10, n_mfcc: int = 13) -> np.ndarray:
@@ -61,10 +62,20 @@ class AdaptiveReptileLearner:
 
     def _clamp(self, p: Dict[str, float]) -> Dict[str, float]:
         q = copy.deepcopy(p)
-        q["energy_threshold"] = float(np.clip(q["energy_threshold"], 0.001, 0.05))
-        q["noise_threshold"] = float(np.clip(q["noise_threshold"], 0.001, 0.05))
-        q["pause_threshold_s"] = float(np.clip(q["pause_threshold_s"], 0.20, 1.20))
-        q["correlation_threshold"] = float(np.clip(q["correlation_threshold"], 0.80, 0.99))
+        if "energy_threshold" in q:
+            q["energy_threshold"] = float(np.clip(q["energy_threshold"], 0.001, 0.05))
+        if "noise_threshold" in q:
+            q["noise_threshold"] = float(np.clip(q["noise_threshold"], 0.001, 0.05))
+        if "pause_threshold_s" in q:
+            q["pause_threshold_s"] = float(np.clip(q["pause_threshold_s"], 0.25, 1.00))
+        if "correlation_threshold" in q:
+            q["correlation_threshold"] = float(np.clip(q["correlation_threshold"], 0.70, 0.92))
+        if "max_remove_ratio" in q:
+            q["max_remove_ratio"] = float(np.clip(q["max_remove_ratio"], 0.10, 0.60))
+        if "streak_threshold" in q:
+            q["streak_threshold"] = float(np.clip(q["streak_threshold"], 3.0, 40.0))
+        if "corr_threshold" in q:
+            q["corr_threshold"] = float(np.clip(q["corr_threshold"], 0.50, 0.99))
         return q
 
     def optimize(
@@ -81,7 +92,7 @@ class AdaptiveReptileLearner:
         task_params = copy.deepcopy(params)
         best_params = copy.deepcopy(task_params)
         ref_mfcc = self._mfcc_matrix(signal, sr)
-        best_loss = 1.0
+        best_loss = float("inf")
         logs: List[Dict[str, float]] = []
         keys = list(task_params.keys())
 
@@ -95,10 +106,22 @@ class AdaptiveReptileLearner:
                 y_lo = dsp_runner(signal, sr, p_lo)
                 s_hi, l_hi = self._score(ref_mfcc, self._mfcc_matrix(y_hi, sr))
                 s_lo, l_lo = self._score(ref_mfcc, self._mfcc_matrix(y_lo, sr))
-                grads[k] = (l_hi - l_lo) / (2.0 * delta)
+                actual_delta = (p_hi[k] - p_lo[k]) / 2.0
+                if abs(actual_delta) < 1e-8:
+                    grads[k] = 0.0
+                else:
+                    grads[k] = (l_hi - l_lo) / (2.0 * actual_delta)
 
             for k in keys:
                 task_params[k] = float(task_params[k] - self.inner_lr * grads[k])
+                
+            # Decaying exploration noise (Paper Mode enhancement)
+            noise_scale = 1.0 / (1.0 + step * 0.8)
+            for k in keys:
+                delta = max(abs(task_params[k]) * 0.05, 1e-4)
+                noise = np.random.normal(0, delta * noise_scale)
+                task_params[k] += noise
+                
             task_params = self._clamp(task_params)
 
             y = dsp_runner(signal, sr, task_params)
@@ -107,27 +130,72 @@ class AdaptiveReptileLearner:
                 best_loss = loss
                 best_params = copy.deepcopy(task_params)
 
-            logs.append(
-                {
-                    "iteration": step,
-                    "score": float(score),
-                    "loss": float(loss),
-                    "energy_threshold": float(task_params["energy_threshold"]),
-                    "noise_threshold": float(task_params["noise_threshold"]),
-                    "pause_threshold_s": float(task_params["pause_threshold_s"]),
-                    "correlation_threshold": float(task_params["correlation_threshold"]),
-                }
-            )
+            log_entry = {
+                "iteration": step,
+                "score": float(score),
+                "loss": float(loss),
+            }
+            log_entry.update({k: float(v) for k, v in task_params.items()})
+            logs.append(log_entry)
 
             # stabilization/oscillation stop
-            if len(logs) >= 6:
+            if len(logs) >= 4:
                 tail = [x["loss"] for x in logs[-4:]]
                 if float(np.std(tail)) < 5e-4:
                     break
 
         # Reptile meta update toward best task params.
         out = {}
-        for k in keys:
-            out[k] = float(params[k] + self.meta_lr * (best_params[k] - params[k]))
+        for k in best_params.keys():
+            meta_val = params.get(k, best_params[k])
+            out[k] = float(meta_val + self.meta_lr * (best_params[k] - meta_val))
         out = self._clamp(out)
         return out, logs
+
+    def load_speaker_calibration(self, speaker_id: str, calibration_dir: str = "maml_calibration") -> np.ndarray:
+        """
+        Load and concatenate calibration clips for a specific speaker.
+        Used to run per-speaker Reptile optimization before processing.
+        Returns concatenated audio signal as np.ndarray at self target sr.
+        """
+        import os
+        import soundfile as sf
+        
+        speaker_path = os.path.join(calibration_dir, speaker_id)
+        if not os.path.exists(speaker_path):
+            print(f"[Warning] Calibration directory not found: {speaker_path}")
+            return None
+        
+        # Get all WAV files in the speaker directory
+        wav_files = [f for f in os.listdir(speaker_path) if f.endswith('.wav')]
+        if not wav_files:
+            print(f"[Warning] No WAV files found in: {speaker_path}")
+            return None
+        
+        # Load and concatenate all calibration clips
+        audio_segments = []
+        for wav_file in sorted(wav_files):
+            file_path = os.path.join(speaker_path, wav_file)
+            try:
+                audio, sr = sf.read(file_path)
+                # Convert to mono if needed
+                if len(audio.shape) > 1:
+                    audio = np.mean(audio, axis=1)
+                # Resample to target rate if needed
+                if sr != 16000:  # TARGET_SR
+                    import librosa
+                    audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+                audio_segments.append(audio)
+            except Exception as e:
+                print(f"[Warning] Failed to load {wav_file}: {e}")
+                continue
+        
+        if not audio_segments:
+            print(f"[Warning] No valid audio segments loaded for speaker {speaker_id}")
+            return None
+        
+        # Concatenate all segments
+        concatenated_audio = np.concatenate(audio_segments)
+        print(f"[Calibration] Loaded {len(audio_segments)} clips for speaker {speaker_id}, total duration: {len(concatenated_audio)/16000:.2f}s")
+        
+        return concatenated_audio

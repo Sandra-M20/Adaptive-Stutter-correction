@@ -1,0 +1,36 @@
+SEP-28K Dataset Integration Report
+==================================================
+
+SUMMARY
+--------------------
+Train/Val/Test Split Sizes:
+  Train: 3715 clips (78.8%)
+  Val:   445 clips (9.4%)
+  Test:  552 clips (11.7%)
+  Total: 4712 clips
+
+OPTIMAL THRESHOLDS
+--------------------
+Prolongation sim_threshold: 0.75 (F1: 0.000)
+Pause max_pause_s: 0.20s (F1: 0.704)
+
+PROLONGATION AUGMENTATION
+------------------------------
+Original prolongation clips: 312
+Augmented clips created: 1560
+Final prolongation clips: 1872
+Final prolongation ratio: 35.5%
+
+MAML CALIBRATION
+--------------------
+Calibration speakers: 16
+Clips per speaker: 5
+Total calibration clips: 80
+
+RECOMMENDATIONS
+--------------------
+1. Update prolongation_corrector.py sim_threshold to optimal value
+2. Update pause_corrector.py max_pause_s to optimal value
+3. Use augmented training set for better class balance
+4. Use MAML calibration clips for speaker adaptation
+5. Consider VAD threshold tuning for better segmentation

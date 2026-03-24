@@ -40,7 +40,7 @@ ENERGY_THRESHOLD    = 0.01     # Short-Time Energy threshold: frames above → s
 # PAUSE CORRECTION THRESHOLDS (Step 4)
 # ─────────────────────────────────────────────────────────────────────────────
 
-MAX_PAUSE_S         = 0.20     # Optimized from SEP-28K dataset calibration
+MAX_PAUSE_S         = 0.60     # Raised from 0.20 — natural inter-sentence pauses are 300-600ms
 PAUSE_RETAIN_RATIO  = 0.10     # Optimized from SEP-28K dataset calibration
 PAUSE_MAX_REMOVE_RATIO = 0.40  # Global cap for pause-frame removal across a clip
 
@@ -48,9 +48,9 @@ PAUSE_MAX_REMOVE_RATIO = 0.40  # Global cap for pause-frame removal across a cli
 # PROLONGATION DETECTION THRESHOLDS (Steps 7-9)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SIM_THRESHOLD       = 0.75     # Optimized from SEP-28K dataset calibration
-MIN_PROLONG_FRAMES  = 5        # Requires more evidence of prolongation
-KEEP_FRAMES         = 3        # Optimized from SEP-28K dataset calibration
+SIM_THRESHOLD       = 0.92     # Raised to 0.92 — genuine prolongations are extremely stable
+MIN_PROLONG_FRAMES  = 12       # 300ms minimum — real prolongations last 300ms+, not just 175ms
+KEEP_FRAMES         = 2        # Keep 2 onset frames, remove the rest
 PROLONG_MAX_REMOVE_RATIO = 0.40  # Optimized from SEP-28K dataset calibration  
 CORR_THRESHOLD      = 14.0     
 USE_REPORT_CORR14   = False    
@@ -76,8 +76,8 @@ BLOCK_CONTEXT_FRAMES     = 3      # Context frames before/after candidate block
 BLOCK_RECOVERY_RATIO     = 1.8    # Post/pre energy recovery ratio required
 
 # SPECTRAL FEATURES (User-requested DSP enhancement)
-SPECTRAL_FLUX_THRESHOLD     = 0.010  # Stricter stability requirement
-SPECTRAL_FLATNESS_THRESHOLD = 0.28   # Ensure tonal speech sounds
+SPECTRAL_FLUX_THRESHOLD     = 0.015  # Very tight — only truly static frames qualify
+SPECTRAL_FLATNESS_THRESHOLD = 0.20   # Very tonal/pure tones only — excludes natural consonants
 
 # GLOBAL MEANING-PRESERVATION SAFETY
 MAX_TOTAL_DURATION_REDUCTION = 0.40  # Allow up to 40% removal (prevents safety reversion)

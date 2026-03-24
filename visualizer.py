@@ -32,7 +32,7 @@ except ImportError:
           "Plots will be skipped. Run: pip install matplotlib")
 
 def _no_plot(name):
-    print(f"[Visualizer] Skipped '{name}' — matplotlib not available.")
+    print(f"[Visualizer] Skipped '{name}' - matplotlib not available.")
     return None
 
 
@@ -46,9 +46,9 @@ def _can_plot(name):
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def _time_axis(signal: np.ndarray, sr: int) -> np.ndarray:
     return np.linspace(0, len(signal) / sr, len(signal))
@@ -63,9 +63,9 @@ def _energy_profile(signal: np.ndarray, sr: int,
     return np.array(times), np.array(energies)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # INDIVIDUAL PLOTS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def plot_waveform(signal: np.ndarray, sr: int = TARGET_SR,
                  title: str = "Waveform", filename: str = None) -> str:

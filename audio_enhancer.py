@@ -134,12 +134,14 @@ class AudioEnhancer:
         gain[over] = (threshold + (env[over] - threshold) / ratio) / env[over]
 
         # Smooth gain to avoid pumping.
-        attack = 0.12
-        release = 0.03
+        # Attack (gain decreasing) should be fast to catch peaks.
+        # Release (gain increasing) should be slower for smooth recovery.
+        attack_time = 0.005  # 5ms
+        release_time = 0.050 # 50ms
         g = np.ones_like(gain)
         for i in range(1, len(g)):
-            a = attack if gain[i] < g[i - 1] else release
-            g[i] = (1 - a) * g[i - 1] + a * gain[i]
+            coeff = attack_time if gain[i] < g[i - 1] else release_time
+            g[i] = (1 - coeff) * g[i - 1] + coeff * gain[i]
 
         y = signal * g
         # Post-compressor makeup gain increases perceived loudness.
@@ -161,8 +163,8 @@ class AudioEnhancer:
         peak = float(np.max(np.abs(signal)))
         if peak > 1e-8:
             signal = signal * (target / peak)
-        # Soft limiter to avoid hard clipping artifacts.
-        signal = np.tanh(1.15 * signal)
+        # Soft limiter with reduced pre-gain to avoid audible distortion.
+        signal = np.tanh(1.05 * signal)
         return np.clip(signal, -1.0, 1.0).astype(np.float32)
 
     def enhance(self, signal: np.ndarray) -> np.ndarray:

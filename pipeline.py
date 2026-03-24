@@ -41,7 +41,8 @@ class ConservativeStutterCorrectionPipeline:
         # Step 1: Minimal preprocessing
         from preprocessing import AudioPreprocessor
         preprocessor = AudioPreprocessor(noise_reduce=False)
-        processed, sr_out = preprocessor.process((signal, sr))
+        result = preprocessor.process((signal, sr))
+        processed, sr_out = result[0], result[1]
         
         # Step 2: Segmentation
         from segmentation import SpeechSegmenter
@@ -49,7 +50,7 @@ class ConservativeStutterCorrectionPipeline:
         frames, labels, energies = segmenter.segment(processed)
         
         # Step 3: Very conservative pause correction
-        from pause_corrector import PauseCorrector
+        from correction.pause_corrector import PauseCorrector
         pause_corrector = PauseCorrector(sr=sr_out, max_pause_s=0.8)  # Only very long pauses
         frames, labels, pause_stats = pause_corrector.correct(frames, labels)
         
@@ -57,9 +58,9 @@ class ConservativeStutterCorrectionPipeline:
         prol_stats = {'prolongation_events': 0, 'frames_removed': 0}
         
         # Step 5: Reconstruct
-        from speech_reconstructor import SpeechReconstructor
-        reconstructor = SpeechReconstructor()
-        temp_audio = reconstructor.reconstruct(frames, labels)
+        from reconstruction.reconstructor import Reconstructor
+        reconstructor = Reconstructor()
+        temp_audio = reconstructor.reconstruct_speech(frames, labels, None, processed, len(processed) / sr_out * 1000)
         
         # Step 6: VERY CONSERVATIVE Repetition Detection
         print(f"\nSearching Conservative Repetition Detection...")
@@ -325,7 +326,7 @@ except ImportError:
             return frames, labels, [np.sum(f**2) for f in frames]
 
 try:
-    from pause_corrector import PauseCorrector
+    from correction.pause_corrector import PauseCorrector
 except ImportError:
     class PauseCorrector:
         def __init__(self, sr=22050, max_pause_s=0.5):
@@ -336,7 +337,7 @@ except ImportError:
             return frames, labels, {'pauses_found': 0}
 
 try:
-    from prolongation_corrector import ProlongationCorrector
+    from correction.prolongation_corrector import ProlongationCorrector
 except ImportError:
     class ProlongationCorrector:
         def __init__(self, sr=22050, sim_threshold=0.85, min_prolong_frames=5):
@@ -348,7 +349,7 @@ except ImportError:
             return frames, labels, {'prolongation_events': 0, 'frames_removed': 0}
 
 try:
-    from speech_reconstructor import SpeechReconstructor
+    from reconstruction.reconstructor import Reconstructor
 except ImportError:
     class SpeechReconstructor:
         def reconstruct(self, frames, labels):

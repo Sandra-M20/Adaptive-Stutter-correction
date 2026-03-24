@@ -244,3 +244,85 @@ This system builds on established speech processing research:
 ---
 
 **This system represents a comprehensive, research-grade approach to stuttering speech correction using proven DSP techniques optimized for real-time applications.**
+
+# System Technical Details & Working Process
+
+## 1. Working of the System (Detailed Explanation)
+
+The proposed system works as a real-time Digital Signal Processing (DSP) pipeline that processes speech input, detects stuttering patterns, and removes them to produce fluent speech.
+
+The working process is divided into several stages.
+
+### 1. Audio Input Stage
+The system begins by capturing raw speech audio from a microphone or audio file.
+- **Process**: User speaks into microphone -> Audio signal is recorded -> Signal is stored as a digital waveform.
+- **Technical Details**: WAV format, 16 kHz or 44.1 kHz, 16-bit depth.
+- **Python Libraries**: `sounddevice`, `soundfile`, `numpy`.
+
+### 2. Pre-processing Stage
+Before analyzing the speech, the system performs signal cleaning and normalization.
+- **Steps**: Noise reduction, Resampling, Amplitude normalization, Silence trimming.
+
+### 3. Speech Segmentation
+The continuous audio signal is divided into small frames for analysis.
+- **Method**: Short-Time Energy (STE) and Zero-Crossing Rate (ZCR).
+- **Purpose**: Distinguish between speech and silence/background noise.
+
+### 4. Detection of Stuttering Patterns
+This is the core of the system. It identifies various types of disfluencies.
+- **Prolongations**: Identified via spectral stability and cosine similarity.
+- **Blocks**: Detected as sudden energy collapses within speech segments.
+- **Repetitions**: Found using Dynamic Time Warping (DTW) and similarity thresholds in 300ms windows.
+- **Adaptive Learning**: Uses Reptile MAML to tune thresholds per speaker.
+
+### 5. Correction and Reconstruction
+Once stuttered segments are identified, they are modified or removed.
+- **Method**: Overlap-Add (OLA) synthesis is used to stitch corrected frames back together smoothly.
+
+### 6. Post-processing and Transcription
+- **Enhancement**: Normalization, de-essing, and equalization for export.
+- **ASR**: Language-independent transcription using multilingual Whisper.
+
+---
+
+## 2. List of Abbreviations
+
+| Abbreviation | Full Form |
+|--------------|-----------|
+| **MFCC** | Mel Frequency Cepstral Coefficients |
+| **LPC** | Linear Predictive Coefficients |
+| **PLP** | Perceptual Linear Prediction |
+| **DTW** | Dynamic Time Warping |
+| **SVM** | Support Vector Machine |
+| **TTS** | Text-to-Speech |
+| **DSP** | Digital Signal Processing |
+| **ANN** | Artificial Neural Network |
+| **k-NN** | k-Nearest Neighbors |
+| **SLP** | Speech-Language Pathologist |
+| **VQ** | Vector Quantization |
+| **LPCC** | Linear Predictive Cepstral Coefficients |
+| **HMM** | Hidden Markov Model |
+| **RNN** | Recurrent Neural Network |
+| **ASR** | Automatic Speech Recognition |
+| **AI** | Artificial Intelligence |
+
+---
+
+## 3. Report Reference & Iterations
+
+The following sections are documented based on the system's development iterations and performance logs.
+
+### Flowcharts
+- **6.1 Prolongation Flowchart**: Logic for detecting and compressing prolonged sounds.
+- **6.2 Long Pause Flowchart**: Logic for identifying and removing abnormal silences.
+
+### 6.3 ML Model Overview
+Describes the integration of Reptile MAML for adaptive threshold tuning.
+
+### 7. Adaptive Learning Iterations
+This section logs the system's meta-learning progress over 10 tasks.
+- **7.1 - 7.10**: Iteration logs showing loss reduction and parameter evolution.
+- **7.11 Updated Parameters**: Final converged thresholds for the current speaker profile.
+- **7.12 Noise Presence Threshold**: Evolution of the energy threshold (Step 7.12).
+- **7.13 Correlation Threshold**: Evolution of the similarity threshold (Step 7.13).
+- **7.14 Prolongation Threshold**: Global optimization score (Step 7.14).

@@ -21,9 +21,9 @@ from config import (N_FFT, HOP_STFT, N_MFCC, N_MEL_FILTERS,
                     LPC_ORDER, TARGET_SR)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # RESAMPLING
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def resample(signal: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
     """
@@ -37,9 +37,9 @@ def resample(signal: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
     return np.interp(old_indices, np.arange(len(signal)), signal).astype(np.float32)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # NORMALIZATION
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def normalize(signal: np.ndarray) -> np.ndarray:
     """Peak-normalize signal amplitude to the range [-1.0, 1.0]."""
@@ -47,9 +47,9 @@ def normalize(signal: np.ndarray) -> np.ndarray:
     return (signal / peak).astype(np.float32) if peak > 1e-8 else signal
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # MEL FILTERBANK
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def mel_filterbank(n_filters: int, n_fft: int, sr: int,
                    fmin: float = 0.0, fmax: float = None) -> np.ndarray:
@@ -76,9 +76,9 @@ def mel_filterbank(n_filters: int, n_fft: int, sr: int,
     return banks
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # STFT / iSTFT
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def stft(signal: np.ndarray, n_fft: int = N_FFT,
          hop: int = HOP_STFT) -> np.ndarray:
@@ -114,9 +114,9 @@ def istft(stft_frames: np.ndarray, hop: int = HOP_STFT,
     return out
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # MFCC
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 # Global cache to avoid redundant filterbank generation
 _MFCC_FILTERBANK_CACHE = {}
@@ -155,9 +155,9 @@ def compute_mfcc(frame: np.ndarray, sr: int = TARGET_SR,
     return mfcc.astype(np.float32)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # LPC  (Levinson-Durbin recursion)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def compute_lpc(frame: np.ndarray, order: int = LPC_ORDER) -> np.ndarray:
     """
@@ -179,9 +179,9 @@ def compute_lpc(frame: np.ndarray, order: int = LPC_ORDER) -> np.ndarray:
     return a.astype(np.float32)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SIMILARITY METRICS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
     """Cosine similarity between two 1-D vectors. Returns value in [-1, 1]."""
@@ -210,3 +210,33 @@ def dtw_distance(seq1: np.ndarray, seq2: np.ndarray) -> float:
 def short_time_energy(frame: np.ndarray) -> float:
     """Compute Short-Time Energy (mean squared amplitude) for a single frame."""
     return float(np.mean(frame ** 2))
+
+
+def spectral_flux(frame1: np.ndarray, frame2: np.ndarray, n_fft: int = N_FFT) -> float:
+    """
+    Compute Spectral Flux between two frames.
+    Formula: sum( (S_k(t) - S_k(t-1))^2 )
+    """
+    s1 = np.abs(np.fft.rfft(frame1 * np.hanning(len(frame1)), n=n_fft)) ** 2
+    s2 = np.abs(np.fft.rfft(frame2 * np.hanning(len(frame2)), n=n_fft)) ** 2
+    
+    # Normalize spectra to make flux independent of absolute volume
+    s1 /= (np.sum(s1) + 1e-10)
+    s2 /= (np.sum(s2) + 1e-10)
+    
+    return float(np.sum((s2 - s1) ** 2))
+
+
+def spectral_flatness(frame: np.ndarray, n_fft: int = N_FFT) -> float:
+    """
+    Compute Spectral Flatness of a frame.
+    Formula: Geometric Mean / Arithmetic Mean of the power spectrum.
+    Values close to 1.0 = noise-like; closer to 0.0 = tonal (speech).
+    """
+    spec = np.abs(np.fft.rfft(frame * np.hanning(len(frame)), n=n_fft)) ** 2
+    spec = np.maximum(spec, 1e-10)  # Avoid log(0)
+    
+    gmean = np.exp(np.mean(np.log(spec)))
+    amean = np.mean(spec)
+    
+    return float(gmean / amean) if amean > 1e-10 else 0.0
