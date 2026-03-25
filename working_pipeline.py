@@ -16,14 +16,36 @@ Steps:
 """
 
 import numpy as np
-from config import TARGET_SR, FRAME_MS, HOP_MS
+from config import TARGET_SR, FRAME_MS, HOP_MS, PAUSE_THRESHOLD_S, SIM_THRESHOLD, MIN_PROLONG_FRAMES
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Overlap-Add reconstruction
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _reconstruct(frames: list, hop_size: int) -> np.ndarray:
+def _crossfade_join(chunk_a: np.ndarray, chunk_b: np.ndarray,
+                    crossfade_ms: int = 20, sr: int = 22050) -> np.ndarray:
+    """
+    Join two audio chunks with a smooth cosine crossfade of crossfade_ms.
+    Use this at splice points instead of hard concatenation.
+    """
+    fade_samples = int(sr * crossfade_ms / 1000)
+    fade_samples = min(fade_samples, len(chunk_a), len(chunk_b))
+    if fade_samples < 2:
+        return np.concatenate([chunk_a, chunk_b])
+
+    fade_out = 0.5 * (1 + np.cos(np.pi * np.arange(fade_samples) / fade_samples))
+    fade_in  = 0.5 * (1 - np.cos(np.pi * np.arange(fade_samples) / fade_samples))
+
+    result = np.concatenate([
+        chunk_a[:-fade_samples],
+        chunk_a[-fade_samples:] * fade_out + chunk_b[:fade_samples] * fade_in,
+        chunk_b[fade_samples:]
+    ])
+    return result.astype(np.float32)
+
+
+def _reconstruct(frames: list, hop_size: int, sr: int) -> np.ndarray:
     """
     Reconstruct audio from overlapping frames using Overlap-Add with a
     Hanning window.  Works correctly for 50 % overlap (hop = frame/2).
@@ -54,7 +76,65 @@ def _reconstruct(frames: list, hop_size: int) -> np.ndarray:
 
     mask = wsum > 1e-10
     out[mask] /= wsum[mask]
-    return out.astype(np.float32)
+    out = out.astype(np.float32)
+
+    # Add explicit crossfade at splice points (detected by low frame similarity)
+    if len(frames) < 2:
+        return out
+
+    def _frame_similarity(a: np.ndarray, b: np.ndarray) -> float:
+        a = a.astype(np.float64)
+        b = b.astype(np.float64)
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        if denom < 1e-8:
+            return 0.0
+        return float(np.dot(a, b) / denom)
+
+    splice_frames = []
+    for i in range(1, len(frames)):
+        if _frame_similarity(frames[i - 1], frames[i]) < 0.6:
+            splice_frames.append(i)
+
+    if not splice_frames:
+        return out
+
+    shift = 0
+    for i in splice_frames:
+        splice_sample = i * hop_size - shift
+        if splice_sample <= 0 or splice_sample >= len(out):
+            continue
+        left = out[:splice_sample]
+        right = out[splice_sample:]
+        joined = _crossfade_join(left, right, crossfade_ms=20, sr=sr)
+        shift += (len(left) + len(right) - len(joined))
+        out = joined
+
+    return out
+
+
+def _post_denoise(signal: np.ndarray, sr: int) -> np.ndarray:
+    """
+    Apply a gentle Wiener-style denoise pass to clean up splice
+    artifacts introduced by OLA reconstruction.
+    Uses a conservative over-subtraction of 0.8 to avoid speech damage.
+    """
+    try:
+        try:
+            from noise_reduction import NoiseReducer
+        except Exception:
+            from noise_reduction_professional import NoiseReducer
+        reducer = NoiseReducer(over_subtraction_factor=0.8)
+        denoised = reducer.reduce_noise(signal, sr)
+        # Safety: if denoised RMS drops more than 40%, reject and return original
+        rms_orig = np.sqrt(np.mean(signal ** 2))
+        rms_new  = np.sqrt(np.mean(denoised ** 2))
+        if rms_orig > 1e-8 and (rms_new / rms_orig) < 0.6:
+            print("[Pipeline] Post-denoise rejected (too aggressive), using pre-denoise")
+            return signal
+        return denoised.astype(np.float32)
+    except Exception as e:
+        print(f"[Pipeline] Post-denoise failed ({e}), skipping")
+        return signal
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,10 +179,10 @@ def _compute_energy_threshold(signal: np.ndarray, frame_size: int, hop_size: int
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_pipeline(signal: np.ndarray, sr: int,
-                 pause_threshold: float      = 0.60,   # 600ms before flagging a block
+                 pause_threshold: float      = PAUSE_THRESHOLD_S,   # 500ms before flagging a block
                  retain_ratio: float         = 0.25,
-                 similarity_threshold: float = 0.92,   # 0.92 — only extremely stable frames qualify
-                 min_prolong_frames: int     = 12) -> dict:  # 300ms minimum — real prolongations only
+                 similarity_threshold: float = SIM_THRESHOLD,   # extremely stable frames only
+                 min_prolong_frames: int     = MIN_PROLONG_FRAMES) -> dict:  # 300ms minimum — real prolongations only
     """
     Run the full stutter correction pipeline.
 
@@ -162,14 +242,12 @@ def run_pipeline(signal: np.ndarray, sr: int,
     # ── Step 5: Prolongation correction ──────────────────────────────────────
     prolong_corrector = ProlongationCorrector(
         sr=sr,
-        sim_threshold=similarity_threshold,
-        min_prolong_frames=min_prolong_frames,
         hop_ms=HOP_MS,
     )
     frames, labels, prolong_stats = prolong_corrector.correct(frames, labels)
 
     # ── Step 6: Overlap-Add reconstruction ───────────────────────────────────
-    reconstructed = _reconstruct(frames, hop_size)
+    reconstructed = _reconstruct(frames, hop_size, sr)
 
     if len(reconstructed) == 0:
         # Fallback: nothing to reconstruct — return original
@@ -178,8 +256,8 @@ def run_pipeline(signal: np.ndarray, sr: int,
     # ── Step 7: Repetition correction ────────────────────────────────────────
     rep_corrector = RepetitionCorrector(
         sr=sr,
-        sim_threshold=0.94,           # raised to 0.94 — only true word/syllable repeats qualify
-        max_total_removal_ratio=0.20,
+        sim_threshold=0.75,           # more sensitive — catch real repetitions
+        max_total_removal_ratio=0.30,
     )
     corrected, rep_stats = rep_corrector.correct(reconstructed)
 
@@ -197,6 +275,9 @@ def run_pipeline(signal: np.ndarray, sr: int,
         peak3 = np.max(np.abs(corrected))
         if peak3 > 1e-8:
             corrected = (corrected / peak3 * 0.95).astype(np.float32)
+
+    # ── Step 9: Post-correction denoising (gentle) ──────────────────────
+    corrected = _post_denoise(corrected, sr)
 
     corrected_duration = len(corrected) / sr
     duration_removed   = max(0.0, original_duration - corrected_duration)

@@ -140,8 +140,8 @@ class RepetitionCorrector:
                  chunk_ms: int = REP_CHUNK_MS,
                  dtw_threshold: float = 2.0,
                  min_silence_ms: int = 80,
-                 max_total_removal_ratio: float = 0.05,
-                 sim_threshold: float = 0.82):
+                 max_total_removal_ratio: float = 0.30,
+                 sim_threshold: float = 0.75):
         """
         Args:
             sr:              Sample rate.

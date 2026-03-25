@@ -151,8 +151,13 @@ def _load_progress(user_id: int):
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-TARGET_CLARITY = 70      # % required to unlock the next exercise
 MIN_DURATION   = 2.0     # reject recordings shorter than this (seconds)
+
+EXERCISE_TARGETS = {
+    0: 40, 1: 45, 2: 50, 3: 52, 4: 55,
+    5: 58, 6: 60, 7: 62, 8: 63, 9: 65,
+    10: 65, 11: 67, 12: 68, 13: 70
+}
 
 EXERCISES = [
     {
@@ -579,14 +584,15 @@ def _correct_with_timestamps(signal: np.ndarray, sr: int, words: list) -> np.nda
 
 
 def _audio_comparison(signal: np.ndarray, sr: int,
-                      result: dict, text: str, words: list):
+                      result: dict, text: str, words: list,
+                      clarity: float, baseline_clarity: float | None = None):
     """
     Render side-by-side audio comparison using the user's own voice,
-    including waveform + spectrogram panels for both original and corrected.
+    then show a plain-English fluency report.
     """
     st.divider()
     st.markdown(
-        "<h3 style='color:#c0d8ee;margin-bottom:4px;'>Audio Comparison</h3>",
+        "<h3 style='color:#5a4878;margin-bottom:4px;'>Audio Comparison</h3>",
         unsafe_allow_html=True,
     )
 
@@ -604,40 +610,30 @@ def _audio_comparison(signal: np.ndarray, sr: int,
 
     with col_orig:
         st.markdown(
-            "<div style='background:rgba(91,168,229,0.08);border:1px solid #1e4060;"
+            "<div style='background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.45);"
             "border-radius:14px;padding:14px 16px 10px;'>"
-            "<span style='color:#5ba8e5;font-weight:700;font-size:14px;'>Original</span>"
+            "<span style='color:#90bcd4;font-weight:700;font-size:14px;'>Original</span>"
             "</div>",
             unsafe_allow_html=True,
         )
         st.audio(_audio_bytes(signal, sr), format="audio/wav")
         if text:
             st.caption(f"*\"{text}\"*")
-        # Spectrum
-        fig_orig = _plot_audio_panels(signal, sr, "Original — Waveform & Spectrum",
-                                      accent="#5ba8e5")
-        st.pyplot(fig_orig, use_container_width=True)
-        plt.close(fig_orig)
 
     with col_corr:
         use_corrected = corrected_voice is not None and len(corrected_voice) > 0
         if use_corrected and np.max(np.abs(corrected_voice)) > 1e-6:
             st.markdown(
-                "<div style='background:rgba(46,196,182,0.08);border:1px solid #1e5050;"
+                "<div style='background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.45);"
                 "border-radius:14px;padding:14px 16px 10px;'>"
-                f"<span style='color:#2ec4b6;font-weight:700;font-size:14px;'>{corr_label}</span>"
+                f"<span style='color:#b094d4;font-weight:700;font-size:14px;'>{corr_label}</span>"
                 "</div>",
                 unsafe_allow_html=True,
             )
             st.audio(_audio_bytes(corrected_voice, sr), format="audio/wav")
             if clean_text:
                 st.caption(f"*\"{clean_text}\"*")
-            # Spectrum
-            fig_corr = _plot_audio_panels(corrected_voice, sr,
-                                          "Corrected — Waveform & Spectrum",
-                                          accent="#2ec4b6")
-            st.pyplot(fig_corr, use_container_width=True)
-            plt.close(fig_corr)
+    _fluency_report_card(result, clarity, baseline_clarity)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -675,19 +671,38 @@ def _analyze(signal: np.ndarray, sr: int) -> tuple:
     return result, clarity
 
 
+def _smooth_corrected_audio(signal: np.ndarray, sr: int) -> np.ndarray:
+    """
+    Apply a gentle low-pass filter to corrected audio to reduce
+    high-frequency splice artifacts before playback.
+    Cutoff: 7500 Hz (preserves all speech, removes only artifact hiss).
+    """
+    try:
+        from scipy.signal import butter, filtfilt
+        nyq = sr / 2.0
+        cutoff = min(7500.0, nyq * 0.95)
+        b, a = butter(2, cutoff / nyq, btype="low")
+        smoothed = filtfilt(b, a, signal.astype(np.float64))
+        return smoothed.astype(np.float32)
+    except Exception:
+        return signal   # fallback: return as-is
+
+
+# === CLARITY SCORE IMPLEMENTATION: START ===
 def _compute_clarity(result: dict) -> float:
     """
     Clarity score weighted by stutter type severity.
-    - Repetitions (-8): most disruptive to fluency
-    - Prolongations (-6): clearly audible but less disruptive
-    - Pauses (-5): natural pauses are acceptable; only long blocks penalise
+    - Pauses (-3): long blocks
+    - Prolongations (-5): audible stretching
+    - Repetitions (-6): most disruptive to fluency
     Capped to [0, 100].
     """
     pauses  = result.get("pause_events", 0)
     prolong = result.get("prolongation_events", 0)
     rep     = result.get("repetition_events", 0)
-    penalty = rep * 8 + prolong * 6 + pauses * 5
+    penalty = pauses * 3 + prolong * 5 + rep * 6
     return round(max(0.0, min(100.0, 100.0 - penalty)), 1)
+# === CLARITY SCORE IMPLEMENTATION: END ===
 
 
 
@@ -715,22 +730,49 @@ def _get_tips(tip_type: str, n: int = 2) -> list:
     return chosen
 
 
+def _ex_target(ex_id: int) -> int:
+    return EXERCISE_TARGETS.get(ex_id, 70)
+
+
 def _clarity_color(score: float) -> str:
-    if score >= 80:
-        return "#27ae60"
-    if score >= TARGET_CLARITY:
-        return "#e67e22"
-    return "#e74c3c"
+    if score >= 80:  return "#7ec8a0"   # soft mint
+    if score >= 70:  return "#e8c060"   # warm gold
+    if score >= 50:  return "#f0a080"   # soft peach
+    return "#d4909a"                    # dusty rose
 
 
 def _clarity_label(score: float) -> str:
     if score >= 80:
-        return "Excellent"
-    if score >= TARGET_CLARITY:
-        return "Good"
+        return "Fully Fluent"
+    if score >= 70:
+        return "Efficient"
     if score >= 50:
-        return "Fair"
-    return "Needs Practice"
+        return "Moderate Stutter"
+    return "Needs Attention"
+
+
+def _clarity_interpretation(score: float,
+                            pause_events: int,
+                            prolongation_events: int,
+                            repetition_events: int) -> str:
+    if score >= 80:
+        return "Your speech was fully fluent — no significant disfluencies were detected."
+    if score >= 70:
+        return (
+            "Efficient speech detected. Minor disfluencies found: "
+            f"{prolongation_events} prolonged sound(s), {repetition_events} repetition(s)."
+        )
+    if score >= 50:
+        return (
+            "Stutter detected. The system found "
+            f"{pause_events} block(s), {prolongation_events} prolongation(s), and "
+            f"{repetition_events} repetition(s). Keep practising."
+        )
+    return (
+        "Significant stuttering detected: "
+        f"{pause_events} block(s), {prolongation_events} prolongation(s), "
+        f"{repetition_events} repetition(s). Audio was corrected above."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -764,122 +806,455 @@ def _init_state():
 def _inject_css():
     st.markdown("""
     <style>
-    /* ── Font Awesome ───────────────────────────────────────────────────── */
-    @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css');
-    /* ── Base ──────────────────────────────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&display=swap');
+
+    /* ── HIDE STREAMLIT CHROME ── */
+    #MainMenu { visibility: hidden !important; }
+    header[data-testid="stHeader"] { display: none !important; }
+    footer { visibility: hidden !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+    [data-testid="stStatusWidget"] { display: none !important; }
+
+    /* ── AURORA GRADIENT BACKGROUND ── */
+    html, body { 
+        background: linear-gradient(135deg, 
+            #e8d5f5 0%, #d4e8f8 25%, 
+            #fce0ef 55%, #faecd8 80%, 
+            #e8d5f5 100%) !important;
+        background-attachment: fixed !important;
+        min-height: 100vh !important;
+    }
     .stApp {
-        background: linear-gradient(160deg, #08131f 0%, #0d1f35 55%, #091522 100%);
-        color: #dde8f0;
+        background: linear-gradient(135deg, 
+            #e8d5f5 0%, #d4e8f8 25%, 
+            #fce0ef 55%, #faecd8 80%, 
+            #e8d5f5 100%) fixed !important;
+        min-height: 100vh !important;
     }
-    /* ── Sidebar ────────────────────────────────────────────────────────── */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0b1929 0%, #081320 100%) !important;
-        border-right: 1px solid #1a3050 !important;
+    .stApp > div,
+    section[data-testid="stMain"],
+    section[data-testid="stMain"] > div,
+    section[data-testid="stMain"] > div > div,
+    .main, .block-container,
+    div[data-testid="stVerticalBlockBorderWrapper"],
+    div[data-testid="stVerticalBlock"],
+    .element-container {
+        background: transparent !important;
     }
-    [data-testid="stSidebar"] .stRadio label,
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] div { color: #b0c8de !important; }
-    /* ── Headings ───────────────────────────────────────────────────────── */
+
+    /* ── FLOATING BUBBLE BLOBS (background decoration) ── */
+    .stApp::before {
+        content: '';
+        position: fixed;
+        top: -20%;
+        left: -10%;
+        width: 55%;
+        height: 55%;
+        background: radial-gradient(ellipse,
+            rgba(200,170,240,0.45) 0%,
+            rgba(180,210,250,0.25) 40%,
+            transparent 70%);
+        border-radius: 50% 60% 40% 70%;
+        animation: floatBlob1 14s ease-in-out infinite;
+        pointer-events: none;
+        z-index: 0;
+        filter: blur(40px);
+    }
+    .stApp::after {
+        content: '';
+        position: fixed;
+        bottom: -15%;
+        right: -10%;
+        width: 50%;
+        height: 50%;
+        background: radial-gradient(ellipse,
+            rgba(255,182,220,0.40) 0%,
+            rgba(180,220,255,0.25) 40%,
+            transparent 70%);
+        border-radius: 60% 40% 70% 30%;
+        animation: floatBlob2 18s ease-in-out infinite;
+        pointer-events: none;
+        z-index: 0;
+        filter: blur(40px);
+    }
+    @keyframes floatBlob1 {
+        0%,100% { transform: translate(0,0) scale(1) rotate(0deg); }
+        33% { transform: translate(3%,5%) scale(1.06) rotate(8deg); }
+        66% { transform: translate(-2%,2%) scale(0.96) rotate(-5deg); }
+    }
+    @keyframes floatBlob2 {
+        0%,100% { transform: translate(0,0) scale(1) rotate(0deg); }
+        33% { transform: translate(-4%,-3%) scale(1.05) rotate(-8deg); }
+        66% { transform: translate(2%,-2%) scale(0.97) rotate(6deg); }
+    }
+
+    /* ── FONT ── */
+    html, body, [class*="css"] {
+        font-family: 'DM Sans', sans-serif !important;
+    }
+    .block-container { padding-top: 2rem !important; }
+
+    /* ── TEXT ── */
     h1 {
-        background: linear-gradient(90deg, #5ba8e5, #2ec4b6);
+        font-weight: 800 !important;
+        font-size: 2.2rem !important;
+        background: linear-gradient(90deg, #8060b0, #c060a0, #6090c0);
+        -webkit-background-clip: text !important;
+        -webkit-text-fill-color: transparent !important;
+        background-clip: text !important;
+    }
+    h2, h3 { color: #5a4878 !important; font-weight: 700 !important; }
+    p, li, caption { color: #6b5a8a !important; }
+    [data-testid="stMarkdownContainer"] p { color: #6b5a8a !important; }
+    [data-testid="stCaptionContainer"] p { color: #9b8ab0 !important; font-size: 12px !important; }
+    span { color: #6b5a8a !important; }
+    label { color: #6b5a8a !important; }
+
+    /* ── GLASS SIDEBAR ── */
+    [data-testid="stSidebar"] {
+        background: rgba(255,255,255,0.28) !important;
+        backdrop-filter: blur(24px) !important;
+        -webkit-backdrop-filter: blur(24px) !important;
+        border-right: 1px solid rgba(255,255,255,0.50) !important;
+        box-shadow: 4px 0 32px rgba(160,130,200,0.18) !important;
+    }
+    [data-testid="stSidebar"] > div {
+        background: transparent !important;
+    }
+    [data-testid="stSidebar"] * { color: #6b5a8a !important; }
+    [data-testid="stSidebar"] .stRadio label {
+        color: #5a4878 !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMetric"] {
+        background: rgba(255,255,255,0.35) !important;
+        backdrop-filter: blur(12px) !important;
+        border-radius: 16px !important;
+        padding: 14px 16px !important;
+        border: 1px solid rgba(255,255,255,0.55) !important;
+        box-shadow: 0 4px 20px rgba(160,130,200,0.18) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMetricValue"] {
+        background: linear-gradient(90deg, #b094d4, #90bcd4) !important;
+        -webkit-background-clip: text !important;
+        -webkit-text-fill-color: transparent !important;
+        background-clip: text !important;
+        font-size: 1.8rem !important;
+        font-weight: 800 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMetricLabel"] {
+        color: #9b8ab0 !important;
+        font-size: 11px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.8px !important;
+    }
+
+    /* ── GLASS BUTTONS ── */
+    .stButton > button {
+        background: rgba(255,255,255,0.35) !important;
+        color: #5a4878 !important;
+        border: 1px solid rgba(255,255,255,0.60) !important;
+        border-radius: 16px !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        padding: 10px 24px !important;
+        backdrop-filter: blur(12px) !important;
+        box-shadow: 0 4px 20px rgba(160,130,200,0.20),
+                    0 1px 0 rgba(255,255,255,0.60) inset !important;
+        transition: all 0.22s ease !important;
+    }
+    .stButton > button:hover {
+        background: rgba(255,255,255,0.50) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 28px rgba(160,130,200,0.28),
+                    0 1px 0 rgba(255,255,255,0.70) inset !important;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, 
+            rgba(192,150,220,0.75), 
+            rgba(140,190,220,0.75)) !important;
+        color: white !important;
+        border: 1px solid rgba(255,255,255,0.50) !important;
+        text-shadow: 0 1px 4px rgba(100,60,140,0.25) !important;
+        box-shadow: 0 6px 24px rgba(176,148,212,0.40),
+                    0 1px 0 rgba(255,255,255,0.50) inset !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg,
+            rgba(210,170,235,0.85),
+            rgba(160,210,235,0.85)) !important;
+        box-shadow: 0 10px 32px rgba(176,148,212,0.50) !important;
+    }
+    .stButton > button[disabled] {
+        background: rgba(255,255,255,0.18) !important;
+        color: rgba(107,90,138,0.35) !important;
+        border-color: rgba(255,255,255,0.25) !important;
+    }
+
+    /* ── GLASS METRIC CARDS ── */
+    [data-testid="stMetric"] {
+        background: rgba(255,255,255,0.30) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border-radius: 20px !important;
+        padding: 20px !important;
+        border: 1px solid rgba(255,255,255,0.55) !important;
+        box-shadow: 0 6px 24px rgba(160,130,200,0.18),
+                    0 1px 0 rgba(255,255,255,0.70) inset !important;
+    }
+    [data-testid="stMetricValue"] {
+        background: linear-gradient(90deg, #b094d4, #90bcd4) !important;
+        -webkit-background-clip: text !important;
+        -webkit-text-fill-color: transparent !important;
+        background-clip: text !important;
+        font-size: 2rem !important;
+        font-weight: 800 !important;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #9b8ab0 !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.8px !important;
+    }
+    [data-testid="stMetricDelta"] { font-weight: 600 !important; }
+
+    /* ── PROGRESS BAR ── */
+    [data-testid="stProgress"] > div {
+        background: rgba(255,255,255,0.30) !important;
+        border-radius: 99px !important;
+        border: 1px solid rgba(255,255,255,0.50) !important;
+        backdrop-filter: blur(8px) !important;
+    }
+    [data-testid="stProgress"] > div > div {
+        background: linear-gradient(90deg, #c4a0d8, #90bcd4, #80c8b0) !important;
+        border-radius: 99px !important;
+    }
+
+    /* ── TEXT INPUTS ── */
+    .stTextInput input,
+    .stTextInput > div > div > input {
+        background: rgba(255,255,255,0.35) !important;
+        color: #3d2d5c !important;
+        border: 1px solid rgba(255,255,255,0.60) !important;
+        border-radius: 14px !important;
+        font-size: 15px !important;
+        backdrop-filter: blur(12px) !important;
+        padding: 12px 16px !important;
+        box-shadow: 0 2px 12px rgba(160,130,200,0.12) !important;
+    }
+    .stTextInput input:focus,
+    .stTextInput > div > div > input:focus {
+        border-color: rgba(176,148,212,0.70) !important;
+        box-shadow: 0 0 0 3px rgba(176,148,212,0.20),
+                    0 2px 12px rgba(160,130,200,0.18) !important;
+        background: rgba(255,255,255,0.50) !important;
+    }
+    .stTextInput input::placeholder { color: #9b8ab0 !important; }
+    .stTextInput label {
+        color: #9b8ab0 !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        text-transform: uppercase !important;
+    }
+
+    /* ── TABS ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(255,255,255,0.25) !important;
+        backdrop-filter: blur(16px) !important;
+        border-radius: 16px !important;
+        padding: 5px !important;
+        border: 1px solid rgba(255,255,255,0.45) !important;
+        box-shadow: 0 4px 16px rgba(160,130,200,0.14) !important;
+        gap: 4px !important;
+        border-bottom: none !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #9b8ab0 !important;
+        font-weight: 600 !important;
+        border-radius: 12px !important;
+        border: none !important;
+        padding: 8px 22px !important;
+        background: transparent !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: rgba(255,255,255,0.65) !important;
+        color: #5a4878 !important;
+        font-weight: 700 !important;
+        box-shadow: 0 4px 14px rgba(160,130,200,0.22) !important;
+    }
+
+    /* ── ALERTS ── */
+    .stSuccess {
+        background: rgba(126,200,160,0.18) !important;
+        border: none !important; border-left: 4px solid #7ec8a0 !important;
+        border-radius: 14px !important;
+        backdrop-filter: blur(12px) !important;
+        box-shadow: 0 4px 16px rgba(126,200,160,0.18) !important;
+    }
+    .stWarning {
+        background: rgba(232,200,120,0.18) !important;
+        border: none !important; border-left: 4px solid #e8c060 !important;
+        border-radius: 14px !important;
+        backdrop-filter: blur(12px) !important;
+    }
+    .stError {
+        background: rgba(212,144,154,0.18) !important;
+        border: none !important; border-left: 4px solid #d490a0 !important;
+        border-radius: 14px !important;
+        backdrop-filter: blur(12px) !important;
+    }
+    .stInfo {
+        background: rgba(144,188,212,0.18) !important;
+        border: none !important; border-left: 4px solid #90bcd4 !important;
+        border-radius: 14px !important;
+        backdrop-filter: blur(12px) !important;
+    }
+    div[data-testid="stAlert"] {
+        backdrop-filter: blur(12px) !important;
+        border-radius: 14px !important;
+    }
+    div[data-testid="stAlert"] p { color: #5a4878 !important; font-weight: 500 !important; }
+
+    /* ── DIVIDER ── */
+    hr {
+        border: none !important;
+        height: 1px !important;
+        background: linear-gradient(90deg,
+            transparent, rgba(176,148,212,0.35), transparent) !important;
+        margin: 20px 0 !important;
+    }
+
+    /* ── AUDIO ── */
+    audio { border-radius: 14px !important; width: 100% !important; }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.20); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: rgba(176,148,212,0.40); border-radius: 3px; }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeUp {
+        from { opacity:0; transform:translateY(16px); }
+        to { opacity:1; transform:translateY(0); }
+    }
+    @keyframes softPulse {
+        0%,100% { box-shadow: 0 8px 32px rgba(176,148,212,0.30), 0 1px 0 rgba(255,255,255,0.60) inset; }
+        50% { box-shadow: 0 12px 40px rgba(176,148,212,0.42), 0 1px 0 rgba(255,255,255,0.70) inset; }
+    }
+    @keyframes barBounce {
+        0%,100% { transform: scaleY(0.35); }
+        50% { transform: scaleY(1.0); }
+    }
+    .fade-up { animation: fadeUp 0.5s ease-out both; }
+    .score-pulse { animation: softPulse 2.8s ease-in-out infinite; }
+
+    /* ── LOGIN HERO ── */
+    .login-hero {
+        text-align: center;
+        padding: 56px 24px 42px;
+        background: rgba(255,255,255,0.28);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border-radius: 28px;
+        margin-bottom: 28px;
+        border: 1px solid rgba(255,255,255,0.55);
+        box-shadow: 0 8px 40px rgba(176,148,212,0.22),
+                    0 1px 0 rgba(255,255,255,0.70) inset;
+        position: relative;
+        overflow: hidden;
+        animation: fadeUp 0.5s ease-out both;
+    }
+    .login-glow {
+        position: absolute; top:0; left:0; right:0; bottom:0;
+        background: radial-gradient(ellipse at 50% 0%,
+            rgba(200,160,240,0.20) 0%, transparent 65%);
+        pointer-events: none;
+    }
+    .login-title {
+        font-size: 40px; font-weight: 900;
+        background: linear-gradient(90deg, #b094d4, #e890c0, #90bcd4);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
-        font-weight: 800;
+        margin-bottom: 10px;
+        letter-spacing: -0.8px; line-height: 1.15;
     }
-    h2, h3 { color: #c0d8ee !important; }
-    /* ── Buttons ────────────────────────────────────────────────────────── */
-    .stButton > button {
-        background: linear-gradient(135deg, #1a5fa0 0%, #1e8c84 100%) !important;
-        color: #ffffff !important;
-        border: none !important;
-        border-radius: 12px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.3px !important;
-        transition: transform 0.18s ease, box-shadow 0.18s ease !important;
-        box-shadow: 0 2px 8px rgba(30,140,130,0.18) !important;
+    .login-sub { color: #9b8ab0 !important; font-size: 15px; max-width: 400px; margin: auto; line-height: 1.65; }
+
+    /* ── WAVE BARS ── */
+    .wave-bars { display:flex; gap:6px; height:38px; align-items:center; justify-content:center; margin-bottom:16px; }
+    .wb { width:6px; background:linear-gradient(180deg,#c4a0d8,#90bcd4); border-radius:3px; animation:barBounce 1.3s ease-in-out infinite; box-shadow:0 2px 8px rgba(176,148,212,0.30); }
+
+    /* ── GLASS CARD UTILITY ── */
+    .clay-card {
+        background: rgba(255,255,255,0.28) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border-radius: 24px !important;
+        padding: 24px !important;
+        border: 1px solid rgba(255,255,255,0.52) !important;
+        box-shadow: 0 8px 32px rgba(160,130,200,0.18),
+                    0 1px 0 rgba(255,255,255,0.65) inset !important;
+        margin-bottom: 16px !important;
     }
-    .stButton > button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 8px 24px rgba(46,196,182,0.30) !important;
+    .clay-card-inset {
+        background: rgba(255,255,255,0.18) !important;
+        backdrop-filter: blur(12px) !important;
+        border-radius: 16px !important;
+        padding: 18px 20px !important;
+        border: 1px solid rgba(255,255,255,0.40) !important;
+        box-shadow: inset 0 2px 8px rgba(160,130,200,0.14) !important;
     }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2ec4b6 0%, #1a9e96 100%) !important;
+
+    /* ── FEATURE CARDS ── */
+    .icard {
+        background: rgba(255,255,255,0.28) !important;
+        border: 1px solid rgba(255,255,255,0.50) !important;
+        border-radius: 22px !important;
+        backdrop-filter: blur(14px) !important;
+        box-shadow: 0 6px 24px rgba(160,130,200,0.16) !important;
     }
-    /* ── Metrics ────────────────────────────────────────────────────────── */
-    [data-testid="stMetric"] {
-        background: rgba(20, 45, 72, 0.65) !important;
-        border-radius: 14px !important;
-        padding: 14px 18px !important;
-        border: 1px solid #1e3a5c !important;
-        backdrop-filter: blur(4px) !important;
+    .icard-title { color: #5a4878 !important; font-weight: 700 !important; }
+    .icard-body { color: #9b8ab0 !important; font-size: 13px !important; line-height: 1.55 !important; }
+
+    /* ── RADIO ── */
+    .stRadio > div { gap: 10px !important; }
+    .stRadio label { color: #6b5a8a !important; font-weight: 500 !important; }
+
+    /* ── SPINNER ── */
+    .stSpinner > div { border-top-color: #b094d4 !important; }
+
+    /* ── SEC LABEL ── */
+    .sec-label {
+        font-size: 11px; font-weight: 700; letter-spacing: 2.5px;
+        background: linear-gradient(90deg, #b094d4, #90bcd4);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-transform: uppercase; margin: 24px 0 12px;
     }
-    [data-testid="stMetricValue"] { color: #5ba8e5 !important; font-weight: 700 !important; }
-    [data-testid="stMetricLabel"] { color: #7fa8c8 !important; }
-    /* ── Progress bar ───────────────────────────────────────────────────── */
-    [data-testid="stProgress"] > div > div {
-        background: linear-gradient(90deg, #3a8fd4, #2ec4b6) !important;
-        border-radius: 99px !important;
+
+    /* ── BUBBLE DECORATION DOTS ── */
+    .bubble-dot {
+        display: inline-block;
+        border-radius: 50%;
+        background: linear-gradient(135deg,
+            rgba(200,160,240,0.55),
+            rgba(160,210,240,0.45));
+        box-shadow: 0 4px 16px rgba(176,148,212,0.25),
+                    inset 0 1px 2px rgba(255,255,255,0.70);
+        backdrop-filter: blur(8px);
     }
-    [data-testid="stProgress"] > div {
-        background: #0f2338 !important;
-        border-radius: 99px !important;
-    }
-    /* ── Inputs ─────────────────────────────────────────────────────────── */
-    .stTextInput > div > div > input {
-        background: #0f2338 !important;
-        color: #dde8f0 !important;
-        border: 1px solid #1e4060 !important;
-        border-radius: 10px !important;
-    }
-    /* ── Tabs ───────────────────────────────────────────────────────────── */
-    .stTabs [data-baseweb="tab"] { color: #7fa8c8 !important; font-weight: 500; }
-    .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        color: #2ec4b6 !important;
-        border-bottom-color: #2ec4b6 !important;
-    }
-    /* ── Alerts / Info boxes ────────────────────────────────────────────── */
-    .stSuccess { background: rgba(46,196,182,0.08) !important; border-color: #2ec4b6 !important; border-radius: 10px !important; }
-    .stWarning { background: rgba(246,201,14,0.08) !important; border-radius: 10px !important; }
-    .stError   { background: rgba(231,76,60,0.08)  !important; border-radius: 10px !important; }
-    .stInfo    { background: rgba(91,168,229,0.08) !important; border-radius: 10px !important; }
-    /* ── Divider ────────────────────────────────────────────────────────── */
-    hr { border-color: #1a3050 !important; }
-    /* ── Audio player ───────────────────────────────────────────────────── */
-    audio { border-radius: 10px !important; }
-    /* ── Matplotlib figures ─────────────────────────────────────────────── */
-    [data-testid="stImage"] img { border-radius: 12px; }
-    /* ── Animations ─────────────────────────────────────────────────────── */
-    @keyframes fadeUp {
-        from { opacity: 0; transform: translateY(16px); }
-        to   { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes scorePulse {
-        0%   { box-shadow: 0 0 0 0   rgba(46,196,182,0.45); }
-        60%  { box-shadow: 0 0 0 18px rgba(46,196,182,0);   }
-        100% { box-shadow: 0 0 0 0   rgba(46,196,182,0);    }
-    }
-    @keyframes barBounce {
-        0%,100% { transform: scaleY(0.3); }
-        50%     { transform: scaleY(1.0); }
-    }
-    .fade-up     { animation: fadeUp 0.45s ease-out both; }
-    .score-pulse { animation: scorePulse 1.8s ease-out; }
-    /* ── Login hero ─────────────────────────────────────────────────────── */
-    .login-hero { text-align:center; padding:50px 24px 36px; background:linear-gradient(160deg,#0a1a2e,#0e2540); border-radius:20px; margin-bottom:28px; border:1px solid #1a3555; position:relative; overflow:hidden; animation:fadeUp 0.45s ease-out both; }
-    .login-glow { position:absolute; top:0; left:0; right:0; bottom:0; background:radial-gradient(ellipse at 50% 0%,rgba(46,196,182,0.10) 0%,transparent 68%); pointer-events:none; }
-    .login-title { font-size:38px; font-weight:800; background:linear-gradient(90deg,#5ba8e5,#2ec4b6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:8px; }
-    .login-sub { color:#6e96b8; font-size:15px; max-width:420px; margin:auto; }
-    /* ── Wave bars ──────────────────────────────────────────────────────── */
-    .wave-bars { display:flex; gap:5px; height:36px; align-items:center; justify-content:center; margin-bottom:10px; }
-    .wb { width:5px; background:linear-gradient(#5ba8e5,#2ec4b6); border-radius:3px; animation:barBounce 1.1s ease-in-out infinite; }
+
     </style>
     """, unsafe_allow_html=True)
 
 
 # Wave bars: all styles via CSS classes — no multi-line attributes so Streamlit renders correctly
-_WAVE_BARS_HTML = '<div class="wave-bars"><div class="wb" style="animation-delay:0.00s"></div><div class="wb" style="animation-delay:0.15s"></div><div class="wb" style="animation-delay:0.30s"></div><div class="wb" style="animation-delay:0.45s"></div><div class="wb" style="animation-delay:0.60s"></div><div class="wb" style="animation-delay:0.75s"></div><div class="wb" style="animation-delay:0.90s"></div></div>'
+_WAVE_BARS_HTML = '<div class="wave-bars"><div class="wb" style="animation-delay:0.00s;height:14px;"></div><div class="wb" style="animation-delay:0.15s;height:22px;"></div><div class="wb" style="animation-delay:0.30s;height:30px;"></div><div class="wb" style="animation-delay:0.45s;height:38px;"></div><div class="wb" style="animation-delay:0.60s;height:30px;"></div><div class="wb" style="animation-delay:0.75s;height:22px;"></div><div class="wb" style="animation-delay:0.90s;height:14px;"></div></div>'
 
 
 def _intro_cards_html() -> str:
@@ -887,9 +1262,9 @@ def _intro_cards_html() -> str:
 
     css = (
         ".intro-wrap{margin:0 0 32px}"
-        ".intro-eyebrow{color:#2ec4b6;font-size:10px;font-weight:700;letter-spacing:4px;"
+        ".intro-eyebrow{color:#b094d4;font-size:10px;font-weight:700;letter-spacing:4px;"
         "text-transform:uppercase;text-align:center;margin:0 0 8px}"
-        ".intro-headline{background:linear-gradient(90deg,#5ba8e5,#2ec4b6);"
+        ".intro-headline{background:linear-gradient(90deg,#b094d4,#f0a080,#90bcd4);"
         "-webkit-background-clip:text;-webkit-text-fill-color:transparent;"
         "background-clip:text;font-size:20px;font-weight:800;text-align:center;margin:0 0 24px}"
         ".cards-vp{overflow:hidden;"
@@ -899,174 +1274,163 @@ def _intro_cards_html() -> str:
         "animation:iScroll 38s linear infinite;padding:4px 0 16px}"
         ".cards-track:hover{animation-play-state:paused}"
         "@keyframes iScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}"
-        ".icard{background:linear-gradient(148deg,#0e2540 0%,#081829 100%);"
-        "border:1px solid #1a3555;border-radius:20px;padding:22px 20px 20px;"
-        "width:218px;flex-shrink:0;"
+        ".icard{background:#f2ede8;"
+        "border:1px solid rgba(255,255,255,0.50);border-radius:20px;padding:22px 20px 20px;"
+        "width:218px;flex-shrink:0;backdrop-filter:blur(14px);"
         "transition:transform .28s,border-color .28s,box-shadow .28s;cursor:default}"
-        ".icard:hover{transform:translateY(-8px);border-color:#2ec4b6;"
-        "box-shadow:0 20px 44px rgba(46,196,182,0.22)}"
+        ".icard:hover{transform:translateY(-8px);border-color:#b094d4;"
+        "box-shadow:0 20px 44px rgba(176,148,212,0.22)}"
         ".icard-art{text-align:center;margin-bottom:14px}"
-        ".icard-title{color:#c8dcea;font-size:13.5px;font-weight:700;"
+        ".icard-title{color:#5a4a38;font-size:13.5px;font-weight:700;"
         "margin:0 0 8px;text-align:center;letter-spacing:0.15px}"
-        ".icard-body{color:#527898;font-size:11.5px;line-height:1.68;text-align:center}"
+        ".icard-body{color:#a89880;font-size:11.5px;line-height:1.68;text-align:center}"
     )
 
-    # ── SVG 1: Voice Recording — microphone + waveform bars ─────────────────
+    # ── SVG 1: Voice Recording ─────────────────
     svg_record = (
         '<svg viewBox="0 0 160 116" width="160" height="116" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="160" height="116" rx="10" fill="#060f1c"/>'
-        # soft glow
-        '<ellipse cx="80" cy="50" rx="52" ry="44" fill="#5ba8e5" fill-opacity="0.07"/>'
+        '<rect width="160" height="116" rx="10" fill="#f2ede8"/>'
+        # mic stand
+        '<path d="M49 58 Q49 91 80 91 Q111 91 111 58" fill="none" stroke="#90bcd4" stroke-width="2.2" stroke-linecap="round"/>'
+        '<line x1="80" y1="91" x2="80" y2="103" stroke="#90bcd4" stroke-width="2.2" stroke-linecap="round"/>'
+        '<line x1="62" y1="103" x2="98" y2="103" stroke="#90bcd4" stroke-width="2.5" stroke-linecap="round"/>'
         # mic body
-        '<rect x="64" y="7" width="32" height="58" rx="16" fill="#0f2d4a" stroke="#5ba8e5" stroke-width="2"/>'
-        # mic grid lines
-        '<line x1="64" y1="30" x2="96" y2="30" stroke="#5ba8e5" stroke-width="0.7" opacity="0.28"/>'
-        '<line x1="64" y1="44" x2="96" y2="44" stroke="#5ba8e5" stroke-width="0.7" opacity="0.28"/>'
-        # mic dot
-        '<circle cx="80" cy="22" r="5" fill="#5ba8e5" fill-opacity="0.35"/>'
-        # stand arc
-        '<path d="M49 58 Q49 91 80 91 Q111 91 111 58" fill="none" stroke="#5ba8e5" stroke-width="2.2" stroke-linecap="round"/>'
-        '<line x1="80" y1="91" x2="80" y2="103" stroke="#5ba8e5" stroke-width="2.2" stroke-linecap="round"/>'
-        '<line x1="62" y1="103" x2="98" y2="103" stroke="#5ba8e5" stroke-width="2.5" stroke-linecap="round"/>'
-        # sound rings L
-        '<path d="M43 31 Q34 54 43 77" fill="none" stroke="#2ec4b6" stroke-width="1.9" stroke-linecap="round" opacity="0.85"/>'
-        '<path d="M28 21 Q15 54 28 87" fill="none" stroke="#2ec4b6" stroke-width="1.4" stroke-linecap="round" opacity="0.36"/>'
-        # sound rings R
-        '<path d="M117 31 Q126 54 117 77" fill="none" stroke="#2ec4b6" stroke-width="1.9" stroke-linecap="round" opacity="0.85"/>'
-        '<path d="M132 21 Q145 54 132 87" fill="none" stroke="#2ec4b6" stroke-width="1.4" stroke-linecap="round" opacity="0.36"/>'
-        # waveform bars along bottom
-        '<rect x="4"   y="108" width="5" height="8"  rx="2" fill="#5ba8e5" opacity="0.28"/>'
-        '<rect x="13"  y="103" width="5" height="13" rx="2" fill="#5ba8e5" opacity="0.44"/>'
-        '<rect x="22"  y="106" width="5" height="10" rx="2" fill="#5ba8e5" opacity="0.38"/>'
-        '<rect x="31"  y="100" width="5" height="16" rx="2" fill="#5ba8e5" opacity="0.58"/>'
-        '<rect x="40"  y="104" width="5" height="12" rx="2" fill="#2ec4b6" opacity="0.52"/>'
-        '<rect x="49"  y="98"  width="5" height="18" rx="2" fill="#2ec4b6" opacity="0.72"/>'
-        '<rect x="58"  y="102" width="5" height="14" rx="2" fill="#2ec4b6" opacity="0.55"/>'
-        '<rect x="67"  y="99"  width="5" height="17" rx="2" fill="#2ec4b6" opacity="0.68"/>'
-        '<rect x="76"  y="95"  width="5" height="21" rx="2" fill="#2ec4b6" opacity="1.00"/>'
-        '<rect x="85"  y="98"  width="5" height="18" rx="2" fill="#2ec4b6" opacity="0.82"/>'
-        '<rect x="94"  y="102" width="5" height="14" rx="2" fill="#5ba8e5" opacity="0.62"/>'
-        '<rect x="103" y="105" width="5" height="11" rx="2" fill="#5ba8e5" opacity="0.44"/>'
-        '<rect x="112" y="101" width="5" height="15" rx="2" fill="#5ba8e5" opacity="0.52"/>'
-        '<rect x="121" y="106" width="5" height="10" rx="2" fill="#5ba8e5" opacity="0.36"/>'
-        '<rect x="130" y="104" width="5" height="12" rx="2" fill="#5ba8e5" opacity="0.32"/>'
-        '<rect x="139" y="107" width="5" height="9"  rx="2" fill="#5ba8e5" opacity="0.26"/>'
-        '<rect x="148" y="109" width="5" height="7"  rx="2" fill="#5ba8e5" opacity="0.20"/>'
+        '<rect x="64" y="7" width="32" height="58" rx="16" fill="#f2ede8" stroke="#90bcd4" stroke-width="2"/>'
+        '<circle cx="80" cy="22" r="5" fill="#90bcd4" fill-opacity="0.35"/>'
+        # sound rings
+        '<path d="M43 31 Q34 54 43 77" fill="none" stroke="#b094d4" stroke-width="1.9" stroke-linecap="round" opacity="0.85"/>'
+        '<path d="M28 21 Q15 54 28 87" fill="none" stroke="#b094d4" stroke-width="1.4" stroke-linecap="round" opacity="0.36"/>'
+        '<path d="M117 31 Q126 54 117 77" fill="none" stroke="#b094d4" stroke-width="1.9" stroke-linecap="round" opacity="0.85"/>'
+        '<path d="M132 21 Q145 54 132 87" fill="none" stroke="#b094d4" stroke-width="1.4" stroke-linecap="round" opacity="0.36"/>'
+        # waveform bars
+        '<rect x="4"   y="108" width="5" height="8"  rx="2" fill="#90bcd4" opacity="0.28"/>'
+        '<rect x="13"  y="103" width="5" height="13" rx="2" fill="#90bcd4" opacity="0.44"/>'
+        '<rect x="22"  y="106" width="5" height="10" rx="2" fill="#90bcd4" opacity="0.38"/>'
+        '<rect x="31"  y="100" width="5" height="16" rx="2" fill="#b094d4" opacity="0.58"/>'
+        '<rect x="40"  y="104" width="5" height="12" rx="2" fill="#b094d4" opacity="0.52"/>'
+        '<rect x="49"  y="98"  width="5" height="18" rx="2" fill="#b094d4" opacity="0.72"/>'
+        '<rect x="58"  y="102" width="5" height="14" rx="2" fill="#b094d4" opacity="0.55"/>'
+        '<rect x="67"  y="99"  width="5" height="17" rx="2" fill="#b094d4" opacity="0.68"/>'
+        '<rect x="76"  y="95"  width="5" height="21" rx="2" fill="#b094d4" opacity="1.00"/>'
+        '<rect x="85"  y="98"  width="5" height="18" rx="2" fill="#b094d4" opacity="0.82"/>'
+        '<rect x="94"  y="102" width="5" height="14" rx="2" fill="#90bcd4" opacity="0.62"/>'
+        '<rect x="103" y="105" width="5" height="11" rx="2" fill="#90bcd4" opacity="0.44"/>'
+        '<rect x="112" y="101" width="5" height="15" rx="2" fill="#90bcd4" opacity="0.52"/>'
+        '<rect x="121" y="106" width="5" height="10" rx="2" fill="#90bcd4" opacity="0.36"/>'
+        '<rect x="130" y="104" width="5" height="12" rx="2" fill="#90bcd4" opacity="0.32"/>'
+        '<rect x="139" y="107" width="5" height="9"  rx="2" fill="#90bcd4" opacity="0.26"/>'
+        '<rect x="148" y="109" width="5" height="7"  rx="2" fill="#90bcd4" opacity="0.20"/>'
         '</svg>'
     )
 
-    # ── SVG 2: Stutter Detection — waveform with 3 labelled highlight boxes ──
+    # ── SVG 2: Stutter Detection ──
     svg_detect = (
         '<svg viewBox="0 0 160 116" width="160" height="116" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="160" height="116" rx="10" fill="#060f1c"/>'
-        # baseline waveform (clean sections)
-        '<polyline points="4,64 10,55 14,73 18,52 22,66 26,58 32,64" fill="none" stroke="#5ba8e5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
-        '<polyline points="116,64 122,56 128,72 134,54 140,66 146,58 152,64 156,60" fill="none" stroke="#5ba8e5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
-        # Block highlight (red)
-        '<rect x="34" y="42" width="30" height="44" rx="5" fill="#e74c3c" fill-opacity="0.12" stroke="#e74c3c" stroke-width="1.2"/>'
-        '<line x1="36" y1="64" x2="62" y2="64" stroke="#e74c3c" stroke-width="2.2" stroke-dasharray="4,3" stroke-linecap="round"/>'
-        '<text x="49" y="38" text-anchor="middle" fill="#e74c3c" font-size="8.5" font-family="sans-serif" font-weight="700">Block</text>'
-        '<line x1="49" y1="40" x2="49" y2="43" stroke="#e74c3c" stroke-width="1" opacity="0.7"/>'
-        # Prolongation highlight (amber)
+        '<rect width="160" height="116" rx="10" fill="#f2ede8"/>'
+        # baseline waveform
+        '<polyline points="4,64 10,55 14,73 18,52 22,66 26,58 32,64" fill="none" stroke="#90bcd4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<polyline points="116,64 122,56 128,72 134,54 140,66 146,58 152,64 156,60" fill="none" stroke="#90bcd4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        # Block highlight
+        '<rect x="34" y="42" width="30" height="44" rx="5" fill="#d4849a" fill-opacity="0.12" stroke="#d4849a" stroke-width="1.2"/>'
+        '<line x1="36" y1="64" x2="62" y2="64" stroke="#d4849a" stroke-width="2.2" stroke-dasharray="4,3" stroke-linecap="round"/>'
+        '<text x="49" y="38" text-anchor="middle" fill="#d4849a" font-size="8.5" font-family="sans-serif" font-weight="700">Block</text>'
+        # Prolongation highlight
         '<rect x="68" y="42" width="28" height="44" rx="5" fill="#f0a500" fill-opacity="0.10" stroke="#f0a500" stroke-width="1.2"/>'
         '<polyline points="70,57 76,57 82,57 88,57 94,57" fill="none" stroke="#f0a500" stroke-width="2.2" stroke-linecap="round"/>'
         '<text x="82" y="38" text-anchor="middle" fill="#f0a500" font-size="8.5" font-family="sans-serif" font-weight="700">Prolong</text>'
-        '<line x1="82" y1="40" x2="82" y2="43" stroke="#f0a500" stroke-width="1" opacity="0.7"/>'
-        # Repetition highlight (violet)
+        # Repetition highlight
         '<rect x="100" y="42" width="30" height="44" rx="5" fill="#9b6bdb" fill-opacity="0.12" stroke="#9b6bdb" stroke-width="1.2"/>'
         '<polyline points="102,54 107,74 112,54 117,74 122,54 126,64" fill="none" stroke="#9b6bdb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
         '<text x="115" y="38" text-anchor="middle" fill="#9b6bdb" font-size="8.5" font-family="sans-serif" font-weight="700">Repeat</text>'
-        '<line x1="115" y1="40" x2="115" y2="43" stroke="#9b6bdb" stroke-width="1" opacity="0.7"/>'
         # x-axis
-        '<line x1="4" y1="86" x2="156" y2="86" stroke="#1a3555" stroke-width="1"/>'
+        '<line x1="4" y1="86" x2="156" y2="86" stroke="#1f361f" stroke-width="1"/>'
         '<text x="80" y="101" text-anchor="middle" fill="#3e6685" font-size="9.5" font-family="sans-serif">Frame-level precision</text>'
         '<text x="80" y="112" text-anchor="middle" fill="#2a4c65" font-size="8.5" font-family="sans-serif">across every recording</text>'
         '</svg>'
     )
 
-    # ── SVG 3: Voice Correction — before/after waveform panels ──────────────
+    # ── SVG 3: Voice Correction ──
     svg_correct = (
         '<svg viewBox="0 0 160 116" width="160" height="116" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="160" height="116" rx="10" fill="#060f1c"/>'
-        # LEFT panel — original (jagged red)
-        '<rect x="4" y="22" width="62" height="52" rx="7" fill="#e74c3c" fill-opacity="0.07" stroke="#2a1a1a" stroke-width="1"/>'
-        '<text x="35" y="17" text-anchor="middle" fill="#e74c3c" font-size="8" font-family="sans-serif" font-weight="700">ORIGINAL</text>'
-        '<polyline points="8,48 13,36 16,48 16,60 19,48 24,36 29,48 29,48 29,60 32,48 37,36 42,48 46,36 51,48 55,36 60,48 63,42" fill="none" stroke="#e74c3c" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<rect width="160" height="116" rx="10" fill="#f2ede8"/>'
+        # LEFT panel — original
+        '<rect x="4" y="22" width="62" height="52" rx="7" fill="#d4849a" fill-opacity="0.07" stroke="#2a1a1a" stroke-width="1"/>'
+        '<text x="35" y="17" text-anchor="middle" fill="#d4849a" font-size="8" font-family="sans-serif" font-weight="700">ORIGINAL</text>'
+        '<polyline points="8,48 13,36 16,48 16,60 19,48 24,36 29,48 29,48 29,60 32,48 37,36 42,48 46,36 51,48 55,36 60,48 63,42" fill="none" stroke="#d4849a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'
         # ARROW
-        '<line x1="74" y1="48" x2="86" y2="48" stroke="#2ec4b6" stroke-width="2.2" stroke-linecap="round"/>'
-        '<polygon points="87,44 95,48 87,52" fill="#2ec4b6"/>'
-        # RIGHT panel — corrected (smooth teal)
-        '<rect x="98" y="22" width="58" height="52" rx="7" fill="#2ec4b6" fill-opacity="0.07" stroke="#0e2520" stroke-width="1"/>'
-        '<text x="127" y="17" text-anchor="middle" fill="#2ec4b6" font-size="8" font-family="sans-serif" font-weight="700">CORRECTED</text>'
-        '<path d="M102 48 Q110 35 118 48 Q126 61 134 48 Q142 35 150 48" fill="none" stroke="#2ec4b6" stroke-width="2" stroke-linecap="round"/>'
+        '<line x1="74" y1="48" x2="86" y2="48" stroke="#b094d4" stroke-width="2.2" stroke-linecap="round"/>'
+        '<polygon points="87,44 95,48 87,52" fill="#b094d4"/>'
+        # RIGHT panel — corrected
+        '<rect x="98" y="22" width="58" height="52" rx="7" fill="#b094d4" fill-opacity="0.07" stroke="#0e2520" stroke-width="1"/>'
+        '<text x="127" y="17" text-anchor="middle" fill="#b094d4" font-size="8" font-family="sans-serif" font-weight="700">CORRECTED</text>'
+        '<path d="M102 48 Q110 35 118 48 Q126 61 134 48 Q142 35 150 48" fill="none" stroke="#b094d4" stroke-width="2" stroke-linecap="round"/>'
         # sparkle stars
-        '<text x="53"  y="95" text-anchor="middle" fill="#e74c3c" font-size="14" opacity="0.4">&#x2715;</text>'
-        '<text x="80"  y="98" text-anchor="middle" fill="#2ec4b6" font-size="18">&#x2714;</text>'
-        '<text x="107" y="95" text-anchor="middle" fill="#2ec4b6" font-size="14" opacity="0.6">&#x2605;</text>'
+        '<text x="53"  y="95" text-anchor="middle" fill="#d4849a" font-size="14" opacity="0.4">&#x2715;</text>'
+        '<text x="80"  y="98" text-anchor="middle" fill="#b094d4" font-size="18">&#x2714;</text>'
+        '<text x="107" y="95" text-anchor="middle" fill="#b094d4" font-size="14" opacity="0.6">&#x2605;</text>'
         '<text x="80" y="112" text-anchor="middle" fill="#3a7060" font-size="9" font-family="sans-serif">Your voice — stutter-free</text>'
         '</svg>'
     )
 
-    # ── SVG 4: Clarity Score — circular gauge ────────────────────────────────
+    # ── SVG 4: Clarity Score ──
     svg_score = (
         '<svg viewBox="0 0 160 116" width="160" height="116" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="160" height="116" rx="10" fill="#060f1c"/>'
+        '<rect width="160" height="116" rx="10" fill="#f2ede8"/>'
         # outer glow ring
-        '<circle cx="80" cy="54" r="44" fill="none" stroke="#2ec4b6" stroke-width="1" opacity="0.12"/>'
+        '<circle cx="80" cy="54" r="44" fill="none" stroke="#b094d4" stroke-width="1" opacity="0.12"/>'
         # track ring
-        '<circle cx="80" cy="54" r="36" fill="none" stroke="#0f2338" stroke-width="9"/>'
-        # filled arc — 87 % of 226deg arc (stroke-dasharray trick)
-        # circumference = 2*pi*36 ≈ 226. 87% = 197. gap = 29.
-        '<circle cx="80" cy="54" r="36" fill="none" stroke="#2ec4b6" stroke-width="9" stroke-linecap="round" stroke-dasharray="197 29" transform="rotate(-113 80 54)"/>'
+        '<circle cx="80" cy="54" r="36" fill="none" stroke="#e8e0d8" stroke-width="9"/>'
+        # filled arc — 87 % of 226deg arc
+        '<circle cx="80" cy="54" r="36" fill="none" stroke="#b094d4" stroke-width="9" stroke-linecap="round" stroke-dasharray="197 29" transform="rotate(-113 80 54)"/>'
         # inner accent
-        '<circle cx="80" cy="54" r="26" fill="#081525" stroke="#1a3555" stroke-width="1"/>'
+        '<circle cx="80" cy="54" r="26" fill="#f2ede8" stroke="#e8e0d8" stroke-width="1"/>'
         # score text
-        '<text x="80" y="49" text-anchor="middle" fill="#c8dcea" font-size="20" font-family="sans-serif" font-weight="800">87%</text>'
-        '<text x="80" y="62" text-anchor="middle" fill="#2ec4b6" font-size="8.5" font-family="sans-serif" font-weight="600">CLARITY</text>'
+        '<text x="80" y="49" text-anchor="middle" fill="#5a4a38" font-size="20" font-family="sans-serif" font-weight="800">87%</text>'
+        '<text x="80" y="62" text-anchor="middle" fill="#b094d4" font-size="8.5" font-family="sans-serif" font-weight="600">CLARITY</text>'
         # tick marks
         '<line x1="80" y1="14" x2="80" y2="20" stroke="#1e3d60" stroke-width="1.5" stroke-linecap="round" transform="rotate(-113 80 54)"/>'
         '<line x1="80" y1="14" x2="80" y2="20" stroke="#1e3d60" stroke-width="1.5" stroke-linecap="round" transform="rotate(0 80 54)"/>'
-        '<line x1="80" y1="14" x2="80" y2="20" stroke="#2ec4b6" stroke-width="1.5" stroke-linecap="round" opacity="0.6" transform="rotate(60 80 54)"/>'
+        '<line x1="80" y1="14" x2="80" y2="20" stroke="#b094d4" stroke-width="1.5" stroke-linecap="round" opacity="0.6" transform="rotate(60 80 54)"/>'
         # badge
-        '<rect x="52" y="97" width="56" height="14" rx="7" fill="#2ec4b6" fill-opacity="0.15" stroke="#2ec4b6" stroke-width="0.8"/>'
-        '<text x="80" y="107.5" text-anchor="middle" fill="#2ec4b6" font-size="8.5" font-family="sans-serif" font-weight="700">Excellent</text>'
+        '<rect x="52" y="97" width="56" height="14" rx="7" fill="#b094d4" fill-opacity="0.15" stroke="#b094d4" stroke-width="0.8"/>'
+        '<text x="80" y="107.5" text-anchor="middle" fill="#b094d4" font-size="8.5" font-family="sans-serif" font-weight="700">Excellent</text>'
         '</svg>'
     )
 
-    # ── SVG 5: Exercises — rising bar staircase ──────────────────────────────
+    # ── SVG 5: Exercises ──
     svg_exercises = (
         '<svg viewBox="0 0 160 116" width="160" height="116" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="160" height="116" rx="10" fill="#060f1c"/>'
+        '<rect width="160" height="116" rx="10" fill="#f2ede8"/>'
         # grid lines
-        '<line x1="10" y1="28" x2="152" y2="28" stroke="#0f2235" stroke-width="0.8"/>'
-        '<line x1="10" y1="48" x2="152" y2="48" stroke="#0f2235" stroke-width="0.8"/>'
-        '<line x1="10" y1="68" x2="152" y2="68" stroke="#0f2235" stroke-width="0.8"/>'
-        # bar 1 — completed (teal)
-        '<rect x="14" y="70" width="20" height="18" rx="4" fill="#2ec4b6" opacity="0.95"/>'
-        '<rect x="14" y="70" width="20" height="4"  rx="2" fill="#5edfd6" opacity="0.6"/>'
-        # bar 2 — completed (teal)
-        '<rect x="42" y="54" width="20" height="34" rx="4" fill="#2ec4b6" opacity="0.85"/>'
-        '<rect x="42" y="54" width="20" height="4"  rx="2" fill="#5edfd6" opacity="0.5"/>'
-        # bar 3 — in progress (blue, partial fill)
-        '<rect x="70" y="38" width="20" height="50" rx="4" fill="#1a3555" opacity="0.9"/>'
-        '<rect x="70" y="60" width="20" height="28" rx="4" fill="#5ba8e5" opacity="0.85"/>'
+        '<line x1="10" y1="28" x2="152" y2="28" stroke="#e8e0d8" stroke-width="0.8"/>'
+        '<line x1="10" y1="48" x2="152" y2="48" stroke="#e8e0d8" stroke-width="0.8"/>'
+        '<line x1="10" y1="68" x2="152" y2="68" stroke="#e8e0d8" stroke-width="0.8"/>'
+        # bar 1 — completed
+        '<rect x="14" y="70" width="20" height="18" rx="4" fill="#b094d4" opacity="0.95"/>'
+        '<rect x="14" y="70" width="20" height="4"  rx="2" fill="#7ec8a0" opacity="0.6"/>'
+        # bar 2 — completed
+        '<rect x="42" y="54" width="20" height="34" rx="4" fill="#b094d4" opacity="0.85"/>'
+        '<rect x="42" y="54" width="20" height="4"  rx="2" fill="#7ec8a0" opacity="0.5"/>'
+        # bar 3 — in progress
+        '<rect x="70" y="38" width="20" height="50" rx="4" fill="#e8e0d8" opacity="0.9"/>'
+        '<rect x="70" y="60" width="20" height="28" rx="4" fill="#90bcd4" opacity="0.85"/>'
         '<rect x="70" y="60" width="20" height="4"  rx="2" fill="#8dc6f0" opacity="0.5"/>'
-        # bar 4 — locked (dark)
-        '<rect x="98" y="26" width="20" height="62" rx="4" fill="#0e1f30" stroke="#1a3555" stroke-width="1"/>'
-        '<text x="108" y="60" text-anchor="middle" fill="#1e4060" font-size="10" font-family="sans-serif">&#x1F512;</text>'
-        # bar 5 — locked (darker)
-        '<rect x="126" y="14" width="20" height="74" rx="4" fill="#080f1a" stroke="#121e2e" stroke-width="1"/>'
-        '<text x="136" y="55" text-anchor="middle" fill="#172030" font-size="10" font-family="sans-serif">&#x1F512;</text>'
+        # bar 4 — locked
+        '<rect x="98" y="26" width="20" height="62" rx="4" fill="#d0c0b0" stroke="#e8e0d8" stroke-width="1"/>'
+        '<text x="108" y="60" text-anchor="middle" fill="#a89880" font-size="10" font-family="sans-serif">&#x1F512;</text>'
+        # bar 5 — locked
+        '<rect x="126" y="14" width="20" height="74" rx="4" fill="#c0b0a0" stroke="#d0c0b0" stroke-width="1"/>'
+        '<text x="136" y="55" text-anchor="middle" fill="#908070" font-size="10" font-family="sans-serif">&#x1F512;</text>'
         # x-axis
-        '<line x1="10" y1="88" x2="152" y2="88" stroke="#1a3555" stroke-width="1.2"/>'
-        '<polygon points="152,85 158,88 152,91" fill="#1a3555"/>'
-        # labels under bars
-        '<text x="24"  y="100" text-anchor="middle" fill="#2ec4b6" font-size="7.5" font-family="sans-serif">Beginner</text>'
-        '<text x="52"  y="100" text-anchor="middle" fill="#2ec4b6" font-size="7.5" font-family="sans-serif">Basic</text>'
-        '<text x="80"  y="100" text-anchor="middle" fill="#5ba8e5" font-size="7.5" font-family="sans-serif">Mid</text>'
-        '<text x="108" y="100" text-anchor="middle" fill="#334d66" font-size="7.5" font-family="sans-serif">Hard</text>'
-        '<text x="136" y="100" text-anchor="middle" fill="#2a3d50" font-size="7.5" font-family="sans-serif">Expert</text>'
-        '<text x="80"  y="112" text-anchor="middle" fill="#2a4d68" font-size="9" font-family="sans-serif">14 progressive exercises</text>'
+        '<line x1="10" y1="88" x2="152" y2="88" stroke="#e8e0d8" stroke-width="1.2"/>'
+        '<polygon points="152,85 158,88 152,91" fill="#e8e0d8"/>'
+        # labels
+        '<text x="24"  y="100" text-anchor="middle" fill="#b094d4" font-size="7.5" font-family="sans-serif">Beginner</text>'
+        '<text x="52"  y="100" text-anchor="middle" fill="#b094d4" font-size="7.5" font-family="sans-serif">Basic</text>'
+        '<text x="80"  y="100" text-anchor="middle" fill="#90bcd4" font-size="7.5" font-family="sans-serif">Mid</text>'
+        '<text x="108" y="100" text-anchor="middle" fill="#a89880" font-size="7.5" font-family="sans-serif">Hard</text>'
+        '<text x="136" y="100" text-anchor="middle" fill="#908070" font-size="7.5" font-family="sans-serif">Expert</text>'
+        '<text x="80"  y="112" text-anchor="middle" fill="#a89880" font-size="9" font-family="sans-serif">14 progressive exercises</text>'
         '</svg>'
     )
 
@@ -1102,17 +1466,59 @@ def _intro_cards_html() -> str:
 def _score_card(score: float, label: str = "Clarity Score"):
     color = _clarity_color(score)
     tag   = _clarity_label(score)
-    glow  = color + "55"
-    # All style values on ONE line per element — prevents Streamlit markdown parser from breaking
-    st.markdown(
-        f'<div class="score-pulse fade-up" style="background:linear-gradient(135deg,{color}18,{color}08);border:2px solid {color};border-radius:20px;padding:32px 20px 24px;text-align:center;margin:16px 0;position:relative;overflow:hidden;">'
-        f'<div style="position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,{color},{color}88);border-radius:20px 20px 0 0;"></div>'
-        f'<div style="font-size:76px;font-weight:800;color:{color};line-height:1;text-shadow:0 0 40px {glow};">{score}%</div>'
-        f'<div style="font-size:15px;color:#7fa8c8;margin-top:10px;">{label}</div>'
-        f'<div style="display:inline-block;background:{color};color:white;padding:5px 20px;border-radius:99px;font-weight:700;font-size:13px;margin-top:12px;">{tag}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    circ  = 389.5
+    filled = (score / 100) * circ
+
+    st.markdown(f"""
+    <div class="score-pulse" style="background:rgba(255,255,255,0.28);border-radius:28px;
+         backdrop-filter:blur(20px);
+         -webkit-backdrop-filter:blur(20px);
+         border:1px solid rgba(255,255,255,0.52);
+         padding:40px 20px 32px;text-align:center;margin:20px 0;
+         box-shadow:0 8px 32px rgba(160,130,200,0.20), 0 1px 0 rgba(255,255,255,0.65) inset;">
+
+      <svg viewBox="0 0 180 180" width="200" height="200"
+           style="display:block;margin:0 auto;">
+        <defs>
+          <filter id="cs_shadow">
+            <feDropShadow dx="2" dy="3" stdDeviation="4"
+                          flood-color="rgba(180,160,140,0.35)"/>
+          </filter>
+        </defs>
+        <!-- shadow ring -->
+        <circle cx="92" cy="92" r="68" fill="none"
+                stroke="rgba(180,160,140,0.22)" stroke-width="22"/>
+        <!-- track -->
+        <circle cx="90" cy="90" r="68" fill="none"
+                stroke="rgba(200,180,230,0.50)" stroke-width="18"/>
+        <!-- score arc -->
+        <circle cx="90" cy="90" r="68" fill="none"
+                stroke="{color}" stroke-width="18"
+                stroke-linecap="round"
+                stroke-dasharray="{filled:.1f} {circ:.1f}"
+                transform="rotate(-90 90 90)"/>
+        <!-- inner raised button -->
+        <circle cx="90" cy="90" r="52"
+                fill="rgba(255,255,255,0.55)" filter="url(#cs_shadow)"/>
+        <!-- score text -->
+        <text x="90" y="83" text-anchor="middle"
+              fill="#5a4878" font-size="30" font-weight="800"
+              font-family="DM Sans, sans-serif">{score}%</text>
+        <text x="90" y="100" text-anchor="middle"
+              fill="#9b8ab0" font-size="11"
+              font-family="DM Sans, sans-serif">Fluency Score</text>
+      </svg>
+
+      <div style="font-size:13px;color:#9b8ab0;margin-top:8px;
+                  font-weight:500;">{label}</div>
+      <div style="display:inline-block;background:{color}22;color:{color};
+                  padding:5px 18px;border-radius:99px;font-size:12px;
+                  font-weight:700;margin-top:10px;
+                  box-shadow:0 6px 24px rgba(160,130,200,0.18), 0 1px 0 rgba(255,255,255,0.60) inset;">
+        {tag}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def _event_metrics(result: dict):
@@ -1120,82 +1526,309 @@ def _event_metrics(result: dict):
     pau = result.get("pause_events", 0)
     pro = result.get("prolongation_events", 0)
     rep = result.get("repetition_events", 0)
+
+    def _mini_card(value, label, color, icon_svg):
+        return f"""
+        <div style="background:#f2ede8;border-radius:20px;padding:20px 16px;
+                    text-align:center;
+                    box-shadow:6px 6px 16px rgba(180,160,140,0.32),
+                               -5px -5px 12px rgba(255,255,255,0.88);">
+          <div style="width:52px;height:52px;border-radius:50%;
+                      background:{color}18;margin:0 auto 12px;
+                      display:flex;align-items:center;justify-content:center;
+                      box-shadow:4px 4px 10px rgba(180,160,140,0.28),
+                                 -3px -3px 8px rgba(255,255,255,0.82);">
+            {icon_svg}
+          </div>
+          <div style="font-size:36px;font-weight:900;color:{color};
+                      line-height:1;">{value}</div>
+          <div style="font-size:11px;color:#a89880;margin-top:6px;
+                      font-weight:600;letter-spacing:0.5px;
+                      text-transform:uppercase;">{label}</div>
+        </div>"""
+
+    svg_dur = '<svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#90bcd4" stroke-width="2"/><polyline points="12,7 12,12 15,15" stroke="#90bcd4" stroke-width="2" stroke-linecap="round"/></svg>'
+    svg_pau = '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="2" fill="#80b4d4"/><rect x="14" y="5" width="4" height="14" rx="2" fill="#80b4d4"/></svg>'
+    svg_pro = '<svg width="22" height="22" viewBox="0 0 24 24"><path d="M2,12 C5,6 8,6 11,12 C14,18 17,18 20,12 C21,9 22,10 24,12" fill="none" stroke="#b094d4" stroke-width="2" stroke-linecap="round"/></svg>'
+    svg_rep = '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="2" y="4" width="10" height="8" rx="3" fill="none" stroke="#f0a080" stroke-width="1.8"/><rect x="12" y="10" width="10" height="8" rx="3" fill="none" stroke="#f0a080" stroke-width="1.8" opacity="0.6"/></svg>'
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Duration",      f"{dur:.1f}s")
-    c2.metric("Long Pauses",   pau)
-    c3.metric("Prolongations", pro)
-    c4.metric("Repetitions",   rep)
+    with c1:
+        st.markdown(_mini_card(f"{dur:.1f}s", "Duration", "#90bcd4", svg_dur), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_mini_card(pau, "Pause / Block", "#80b4d4", svg_pau), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_mini_card(pro, "Prolonged", "#b094d4", svg_pro), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_mini_card(rep, "Repeated", "#f0a080", svg_rep), unsafe_allow_html=True)
 
 
-def _plot_audio_panels(signal: np.ndarray, sr: int, title: str,
-                       accent: str = "#5ba8e5") -> plt.Figure:
-    """
-    Return a matplotlib Figure with:
-      Top    — waveform (amplitude vs time)
-      Bottom — mel-spectrogram (frequency content over time)
-    Styled to match the dark navy theme.
-    """
-    BG_DARK  = "#08131f"
-    BG_PANEL = "#0d1f35"
-    GRID_CLR = "#1a3050"
-    TEXT_CLR = "#7fa8c8"
+def _fluency_report_card(result: dict, clarity: float,
+                         baseline_clarity: float | None):
+    def _score_color(s: float) -> str:
+        if s >= 80:
+            return "#7ec8a0"
+        if s >= 70:
+            return "#e8c060"
+        return "#d4849a"
 
-    # Downsample for waveform display (≤4 000 pts keeps it fast)
-    MAX_WAVE = 4_000
-    step = max(1, len(signal) // MAX_WAVE)
-    sig_d = signal[::step]
-    t_d   = np.linspace(0, len(signal) / sr, len(sig_d))
+    def _severity(count: int) -> str:
+        if count == 0:
+            return "None Detected"
+        if count <= 2:
+            return "Mild"
+        if count <= 5:
+            return "Moderate"
+        return "Frequent"
 
-    # Compute STFT spectrogram
-    N_FFT, HOP = 512, 128
-    win   = np.hanning(N_FFT)
-    sig_s = signal[:sr * 30]   # cap at 30 s for speed
-    frames = [
-        np.abs(np.fft.rfft(sig_s[i:i + N_FFT] * win))
-        for i in range(0, len(sig_s) - N_FFT, HOP)
-    ]
-    if frames:
-        S     = np.array(frames).T
-        S_db  = 20 * np.log10(np.maximum(S, 1e-8))
-        freqs = np.fft.rfftfreq(N_FFT, 1.0 / sr)
-        mask  = freqs <= 8_000
-        t_sp  = np.linspace(0, len(sig_s) / sr, S.shape[1])
+    pause_events = int(result.get("pause_events", 0))
+    prolong_events = int(result.get("prolongation_events", 0))
+    rep_events = int(result.get("repetition_events", 0))
+
+    st.markdown(
+        '<div class="clay-card">'
+        '<div class="sec-label">Speech Therapy Report</div>'
+        '<div style="font-size:26px;font-weight:800;color:#5a4a38;line-height:1.2;">Your Fluency Analysis</div>'
+        '<div style="font-size:13px;color:#a89880;margin-top:6px;">Based on your recorded attempt - reviewed for fluency</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Part 1: Score ring cards
+    c1, c2 = st.columns(2)
+
+    def _ring_svg(score: float | None, color: str) -> str:
+        circumference = 2 * 3.14159 * 68
+        if score is None:
+            filled = 0
+            center = "--"
+        else:
+            filled = (score / 100) * circumference
+            center = f"{score:.0f}%"
+        gap = max(0, circumference - filled)
+        return (
+            '<svg viewBox="0 0 160 160" width="160" height="160">'
+            '<circle cx="80" cy="80" r="68" stroke="rgba(180,160,140,0.22)" stroke-width="12" fill="none" />'
+            f'<circle cx="80" cy="80" r="68" stroke="{color}" stroke-width="12" fill="none" '
+            f'stroke-dasharray="{filled:.0f} {gap:.0f}" stroke-dashoffset="{circumference * 0.25:.0f}" '
+            'transform="rotate(-90 80 80)" stroke-linecap="round" />'
+            f'<text x="80" y="86" text-anchor="middle" fill="#3d3028" font-size="32" font-weight="800">{center}</text>'
+            '<text x="80" y="108" text-anchor="middle" fill="#a89880" font-size="11">Score</text>'
+            '</svg>'
+        )
+
+    def _subtitle(score: float | None) -> str:
+        if score is None:
+            return "Baseline not recorded"
+        if score >= 80:
+            return "Fluent Speech"
+        if score >= 70:
+            return "Mild Disfluency"
+        if score >= 50:
+            return "Moderate Stutter"
+        return "Significant Stutter"
+
+    with c1:
+        base_color = _score_color(baseline_clarity) if baseline_clarity is not None else "#90bcd4"
+        st.markdown(
+            '<div class="clay-card">'
+            '<div style="font-size:13px;color:#a89880;letter-spacing:1px;">Before Correction</div>'
+            f'{_ring_svg(baseline_clarity, base_color)}'
+            f'<div style="font-size:14px;color:#5a4a38;margin-top:6px;font-weight:700;">{_subtitle(baseline_clarity)}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with c2:
+        cur_color = _score_color(clarity)
+        delta_line = "Record a baseline to compare"
+        delta_color = "#a89880"
+        if baseline_clarity is not None:
+            delta = clarity - baseline_clarity
+            if delta > 0:
+                delta_line = f"+{delta:.1f} pts improvement"
+                delta_color = "#7ec8a0"
+            elif delta < 0:
+                delta_line = f"{delta:.1f} pts"
+                delta_color = "#d4849a"
+            else:
+                delta_line = "0.0 pts"
+        st.markdown(
+            '<div class="clay-card">'
+            '<div style="font-size:13px;color:#a89880;letter-spacing:1px;">After Correction</div>'
+            f'{_ring_svg(clarity, cur_color)}'
+            f'<div style="font-size:14px;color:#5a4a38;margin-top:6px;font-weight:700;">{_subtitle(clarity)}</div>'
+            f'<div style="font-size:12px;color:{delta_color};margin-top:6px;">{delta_line}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # Part 2: Stutter type visual cards
+    st.markdown(
+        '<div class="sec-label">Speech Difficulties</div>',
+        unsafe_allow_html=True,
+    )
+
+    cc1, cc2, cc3 = st.columns(3)
+
+    def _type_card(count: int, label: str, color: str, svg: str) -> str:
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+        sev = _severity(count)
+        return (
+            f'<div class="clay-card" style="text-align:center;">'
+            f'{svg}'
+            f'<div style="font-size:56px;font-weight:900;color:{color};line-height:1;margin-top:6px;">{count}</div>'
+            f'<div style="font-size:13px;color:#a89880;margin-top:4px;">{label}</div>'
+            f'<div style="display:inline-block;background:{color}22;color:{color};padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700;margin-top:8px;">{sev}</div>'
+            '</div>'
+        )
+
+    pause_svg = '<svg viewBox="0 0 40 40" width="40" height="40"><rect x="8" y="10" width="8" height="20" rx="3" fill="none" stroke="#90bcd4" stroke-width="2.5"/><rect x="24" y="10" width="8" height="20" rx="3" fill="none" stroke="#90bcd4" stroke-width="2.5"/></svg>'
+    prolong_svg = '<svg viewBox="0 0 40 40" width="40" height="40"><path d="M4,20 Q10,10 16,20 Q22,30 28,20 Q34,10 40,20" fill="none" stroke="#e8c060" stroke-width="2.5" stroke-linecap="round"/><line x1="4" y1="20" x2="40" y2="20" stroke="#e8c060" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/></svg>'
+    rep_svg = '<svg viewBox="0 0 40 40" width="40" height="40"><polyline points="2,20 7,12 12,20 17,28 22,20 27,12 32,20 37,28" fill="none" stroke="#d4849a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><polyline points="2,20 7,14 12,20 17,26 22,20 27,14 32,20 37,26" fill="none" stroke="#d4849a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/></svg>'
+
+    with cc1:
+        st.markdown(_type_card(pause_events, "Pause / Block", "#90bcd4", pause_svg), unsafe_allow_html=True)
+    with cc2:
+        st.markdown(_type_card(prolong_events, "Prolonged Sound", "#e8c060", prolong_svg), unsafe_allow_html=True)
+    with cc3:
+        st.markdown(_type_card(rep_events, "Word Repetition", "#d4849a", rep_svg), unsafe_allow_html=True)
+
+    st.divider()
+
+    # Part 3: Speech composition visual
+    st.markdown(
+        '<div class="sec-label">Speech Breakdown</div>',
+        unsafe_allow_html=True,
+    )
+
+    total_events = pause_events + prolong_events + rep_events
+    penalty = (pause_events * 3) + (prolong_events * 5) + (rep_events * 6)
+    fluent_pct = max(10, min(90, 100 - penalty))
+    if total_events > 0:
+        remaining = 100 - fluent_pct
+        pause_pct = round((pause_events / total_events) * remaining)
+        prolong_pct = round((prolong_events / total_events) * remaining)
+        rep_pct = 100 - fluent_pct - pause_pct - prolong_pct
     else:
-        S_db = mask = t_sp = freqs = None
+        pause_pct = prolong_pct = rep_pct = 0
 
-    fig = plt.figure(figsize=(5.6, 3.8), facecolor=BG_DARK)
-    fig.patch.set_facecolor(BG_DARK)
-    gs  = gridspec.GridSpec(2, 1, figure=fig, hspace=0.50,
-                             top=0.88, bottom=0.12, left=0.10, right=0.97)
+    fluent_text = f"Fluent {fluent_pct}%" if fluent_pct >= 10 else ""
+    pause_text = f"Pauses {pause_pct}%" if pause_pct >= 10 else ""
+    prolong_text = f"Prolonged {prolong_pct}%" if prolong_pct >= 10 else ""
+    rep_text = f"Repeated {rep_pct}%" if rep_pct >= 10 else ""
 
-    # ── Waveform ─────────────────────────────────────────────────────────
-    ax1 = fig.add_subplot(gs[0])
-    ax1.set_facecolor(BG_PANEL)
-    ax1.fill_between(t_d, sig_d, color=accent, alpha=0.30)
-    ax1.plot(t_d, sig_d, color=accent, linewidth=0.7, alpha=0.85)
-    ax1.set_xlim(0, len(signal) / sr)
-    ax1.set_ylim(-1.1, 1.1)
-    ax1.set_ylabel("Amplitude", color=TEXT_CLR, fontsize=7.5)
-    ax1.set_xlabel("Time (s)", color=TEXT_CLR, fontsize=7.5)
-    ax1.tick_params(colors=TEXT_CLR, labelsize=7)
-    for sp in ax1.spines.values():
-        sp.set_edgecolor(GRID_CLR)
-    ax1.grid(axis="x", color=GRID_CLR, linewidth=0.5, linestyle="--", alpha=0.6)
-    fig.suptitle(title, color="#c8dcea", fontsize=11, fontweight="bold")
+    st.markdown(
+        f'<div style="width:100%;height:52px;border-radius:12px;overflow:hidden;display:flex;box-shadow:inset 4px 4px 10px rgba(180,160,140,0.28),inset -3px -3px 8px rgba(255,255,255,0.80);margin:14px 0;border:1px solid rgba(255,255,255,0.50);">'
+        f'<div style="width:{fluent_pct}%;background:linear-gradient(90deg,rgba(126,200,160,0.55),#7ec8a0);display:flex;align-items:center;justify-content:center;color:#3d3028;font-size:11px;font-weight:700;">{fluent_text}</div>'
+        f'<div style="width:{pause_pct}%;background:linear-gradient(90deg,rgba(144,188,212,0.55),#90bcd4);display:flex;align-items:center;justify-content:center;color:#3d3028;font-size:11px;font-weight:700;">{pause_text}</div>'
+        f'<div style="width:{prolong_pct}%;background:linear-gradient(90deg,rgba(232,192,96,0.55),#e8c060);display:flex;align-items:center;justify-content:center;color:#3d3028;font-size:11px;font-weight:700;">{prolong_text}</div>'
+        f'<div style="width:{rep_pct}%;background:linear-gradient(90deg,rgba(212,132,154,0.55),#d4849a);display:flex;align-items:center;justify-content:center;color:#3d3028;font-size:11px;font-weight:700;">{rep_text}</div>'
+        f'</div>'
+        f'<div style="display:flex;gap:18px;margin-top:8px;font-size:12px;color:#a89880;">'
+        f'<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#7ec8a0;margin-right:6px;"></span>Fluent</span>'
+        f'<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#90bcd4;margin-right:6px;"></span>Pauses</span>'
+        f'<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#e8c060;margin-right:6px;"></span>Prolongations</span>'
+        f'<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#d4849a;margin-right:6px;"></span>Repetitions</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
-    # ── Spectrogram ───────────────────────────────────────────────────────
-    ax2 = fig.add_subplot(gs[1])
-    ax2.set_facecolor(BG_PANEL)
-    if S_db is not None:
-        ax2.pcolormesh(t_sp, freqs[mask] / 1_000, S_db[mask],
-                       cmap="plasma", shading="auto", vmin=-80, vmax=0)
-    ax2.set_ylabel("Freq (kHz)", color=TEXT_CLR, fontsize=7.5)
-    ax2.set_xlabel("Time (s)", color=TEXT_CLR, fontsize=7.5)
-    ax2.tick_params(colors=TEXT_CLR, labelsize=7)
-    for sp in ax2.spines.values():
-        sp.set_edgecolor(GRID_CLR)
+    st.divider()
 
-    return fig
+    # Part 4: Time summary (clean two-column stat block)
+    original_duration = float(result.get("original_duration", 0))
+    corrected_duration = float(result.get("corrected_duration", 0))
+
+    t1, t2 = st.columns(2)
+    with t1:
+        st.markdown(
+            f'<div class="clay-card-inset" style="text-align:center;">'
+            f'<div style="font-size:28px;font-weight:800;color:#90bcd4;">{original_duration:.1f}s</div>'
+            f'<div style="font-size:12px;color:#a89880;margin-top:6px;">Original length</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with t2:
+        st.markdown(
+            f'<div class="clay-card-inset" style="text-align:center;">'
+            f'<div style="font-size:28px;font-weight:800;color:#b094d4;">{corrected_duration:.1f}s</div>'
+            f'<div style="font-size:12px;color:#a89880;margin-top:6px;">Corrected length</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # Part 5: Therapy verdict card
+    score_color = _score_color(clarity)
+    if clarity >= 80:
+        status = "FULLY FLUENT"
+        heading = "Excellent Speech"
+        body = (
+            "No significant disfluencies were detected in this session. "
+            "Your breathing, pacing, and articulation were all natural and clear. "
+            "This is the standard to maintain."
+        )
+    elif clarity >= _ex_target(13):
+        status = "TARGET REACHED"
+        heading = "Efficient Speech"
+        body = (
+            "You met the required fluency target for this exercise. "
+            "Some minor disfluencies were detected but did not significantly impact your communication. "
+            "Continue practising to move closer to full fluency."
+        )
+    elif clarity >= 50:
+        status = "IN PROGRESS"
+        heading = "Moderate Stuttering"
+        body = (
+            "The system detected noticeable disfluencies in your speech. "
+            "This is normal at this stage of therapy. Review the breakdown above and focus on the tips section "
+            "to target specific areas of improvement."
+        )
+    else:
+        status = "NEEDS ATTENTION"
+        heading = "Significant Stuttering"
+        body = (
+            "Substantial disfluencies were found in this recording. The corrected audio above has had these "
+            "removed for your reference. Do not be discouraged ? consistent practice with the targeted exercises "
+            "below will improve your fluency."
+        )
+
+    arc_len = 3.14159 * 80
+    filled = (clarity / 100) * arc_len
+
+    left_col, right_col = st.columns([1, 2])
+    with left_col:
+        st.markdown(
+            f'<div class="clay-card" style="text-align:center;">'
+            f'<svg viewBox="0 0 200 120" width="200" height="120">'
+            f'<path d="M 20,100 A 80,80 0 0,1 180,100" fill="none" stroke="rgba(180,160,140,0.22)" stroke-width="18" stroke-linecap="round"/>'
+            f'<path d="M 20,100 A 80,80 0 0,1 180,100" fill="none" stroke="{score_color}" stroke-width="18" stroke-linecap="round" stroke-dasharray="{filled:.0f} {arc_len:.0f}"/>'
+            f'<text x="100" y="95" text-anchor="middle" fill="#3d3028" font-size="22" font-weight="800">{clarity:.0f}%</text>'
+            f'<text x="100" y="112" text-anchor="middle" fill="#a89880" font-size="10">Fluency Score</text>'
+            f'<text x="12" y="115" fill="#d4849a" font-size="9">Low</text>'
+            f'<text x="88" y="30" fill="#e8c060" font-size="9">Mid</text>'
+            f'<text x="172" y="115" fill="#7ec8a0" font-size="9">High</text>'
+            f'</svg>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with right_col:
+        st.markdown(
+            f'<div class="clay-card" style="padding:0;overflow:hidden;">'
+            f'<div style="background:rgba(0,0,0,0);border-left:3px solid {score_color};border-radius:0 12px 12px 0;padding:24px;">'
+            f'<div style="font-size:11px;letter-spacing:2px;font-weight:700;color:{score_color};text-transform:uppercase;">{status}</div>'
+            f'<div style="font-size:20px;font-weight:800;color:#3d3028;margin-top:8px;">{heading}</div>'
+            f'<div style="font-size:14px;color:#a89880;line-height:1.7;margin-top:10px;">{body}</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _show_tips(tip_type: str, header: str = "Guidance for You"):
@@ -1228,7 +1861,7 @@ def _recording_section(widget_key: str) -> tuple:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def page_home():
-    st.title("Stutter Clarity Coach")
+    _home_header()
 
     # ── Baseline already exists ────────────────────────────────────────────
     if st.session_state.baseline:
@@ -1274,6 +1907,10 @@ def page_home():
         if st.button("Analyze My Speech", type="primary", use_container_width=True):
             with st.spinner("Analyzing your speech…"):
                 result, clarity = _analyze(signal, sr)
+                # Smooth corrected audio for playback
+                result["corrected_signal"] = _smooth_corrected_audio(
+                    result["corrected_signal"], result["sr"]
+                )
 
             # Transcription first so it gets stored alongside results
             with st.spinner("Analyzing & transcribing…"):
@@ -1296,7 +1933,7 @@ def page_home():
                 st.markdown(f"*{transcript}*")
 
             # Side-by-side audio comparison using user's own voice
-            _audio_comparison(signal, sr, result, transcript, words)
+            _audio_comparison(signal, sr, result, transcript, words, clarity, None)
 
             st.divider()
             st.success("Baseline saved. Head to **Exercises** to start improving.")
@@ -1320,51 +1957,37 @@ def page_exercises():
     if bl:
         st.info(
             f"Your baseline: **{bl['clarity']}%** &nbsp;|&nbsp; "
-            f"Target per exercise: **{TARGET_CLARITY}%**"
+            f"Target for next exercise: **{_ex_target(st.session_state.ex_open or 0)}%**"
         )
     else:
         st.warning("Record your baseline on **Home** first for the best experience.")
 
     st.markdown(
-        f"Complete each exercise with **{TARGET_CLARITY}% or higher** "
-        "to unlock the next one."
+        "Each exercise has its own target score — targets increase gradually as you progress."
     )
     st.divider()
 
     for ex in EXERCISES:
         state     = st.session_state.ex_states[ex["id"]]
-        completed = state["completed"]
+        target    = _ex_target(ex["id"])
+        
+        # Render the exercise card
+        _exercise_card(ex, state, target)
+        
+        # Action button below the card
         unlocked  = state["unlocked"]
-
-        left, right = st.columns([4, 1])
-
-        with left:
-            if completed:
-                st.markdown(f"**{ex['title']}** &nbsp; <span style='color:#2ec4b6;font-size:12px;font-weight:600;'>COMPLETE</span> &nbsp; *{ex['difficulty']}*", unsafe_allow_html=True)
-            elif unlocked:
-                st.markdown(f"**{ex['title']}** &nbsp; <span style='color:#5ba8e5;font-size:12px;font-weight:600;'>UNLOCKED</span> &nbsp; *{ex['difficulty']}*", unsafe_allow_html=True)
-            else:
-                st.markdown(f"~~{ex['title']}~~ &nbsp; <span style='color:#4a6080;font-size:12px;font-weight:600;'>LOCKED</span> &nbsp; *{ex['difficulty']}*", unsafe_allow_html=True)
-
-            st.caption(f"Focus: *{ex['focus']}*")
-
-            if state["best_score"] is not None:
-                st.caption(
-                    f"Best score: **{state['best_score']}%** "
-                    f"| Attempts: {state['attempts']}"
-                )
-
-        with right:
-            if unlocked or completed:
-                btn_label = "Review" if completed else "Start"
-                if st.button(btn_label, key=f"open_{ex['id']}", use_container_width=True):
-                    st.session_state.ex_open = ex["id"]
-                    st.rerun()
-            else:
-                st.button(
-                    "Locked", key=f"open_{ex['id']}",
-                    disabled=True, use_container_width=True,
-                )
+        completed = state["completed"]
+        
+        if unlocked or completed:
+            btn_label = "Review" if completed else "Start"
+            if st.button(btn_label, key=f"open_{ex['id']}", use_container_width=True):
+                st.session_state.ex_open = ex["id"]
+                st.rerun()
+        else:
+            st.button(
+                "Locked", key=f"open_{ex['id']}",
+                disabled=True, use_container_width=True,
+            )
 
         st.divider()
 
@@ -1401,10 +2024,9 @@ def page_exercise_detail(ex_id: int):
     # ── Text to read ──────────────────────────────────────────────────────
     st.subheader("Read This Aloud")
     st.markdown(f"*{ex['instruction']}*")
-    st.markdown(
-        f'<div style="background:#0d2240;color:#dde8f0;padding:22px 26px;border-radius:12px;font-size:20px;line-height:1.9;border-left:5px solid #2ec4b6;margin:12px 0 20px 0;">{ex["text"]}</div>',
-        unsafe_allow_html=True,
-    )
+    
+    # Use the new read-aloud box
+    _read_aloud_box(ex["text"])
 
     st.divider()
 
@@ -1421,6 +2043,10 @@ def page_exercise_detail(ex_id: int):
         ):
             with st.spinner("Analyzing your speech…"):
                 result, clarity = _analyze(signal, sr)
+                # Smooth corrected audio for playback
+                result["corrected_signal"] = _smooth_corrected_audio(
+                    result["corrected_signal"], result["sr"]
+                )
 
             # Persist updated state
             state["attempts"] += 1
@@ -1455,11 +2081,11 @@ def page_exercise_detail(ex_id: int):
             st.divider()
 
             # ── Pass / Fail ───────────────────────────────────────────────
-            if clarity >= TARGET_CLARITY:
+            if clarity >= _ex_target(ex_id):
                 st.balloons()
                 st.success(
                     f"**Exercise Complete!** "
-                    f"You scored **{clarity}%** (target: {TARGET_CLARITY}%)"
+                    f"You scored **{clarity}%** (target: {_ex_target(ex_id)}%)"
                 )
                 next_id = ex_id + 1
                 if not state["completed"]:
@@ -1485,10 +2111,10 @@ def page_exercise_detail(ex_id: int):
                         st.rerun()
 
             else:
-                needed = TARGET_CLARITY - clarity
+                needed = _ex_target(ex_id) - clarity
                 st.warning(
                     f"Score: **{clarity}%** — You need **{needed:.1f}% more** "
-                    f"to complete this exercise. Keep practising!"
+                    f"to reach the target of **{_ex_target(ex_id)}%**. Keep practising!"
                 )
                 _show_tips(ex["tip_type"], "Tips to Improve Your Score")
 
@@ -1498,7 +2124,10 @@ def page_exercise_detail(ex_id: int):
             )
 
             # Side-by-side audio comparison using user's own voice
-            _audio_comparison(signal, sr, result, tx, words)
+            _audio_comparison(
+                signal, sr, result, tx, words, clarity,
+                st.session_state.baseline["clarity"] if st.session_state.baseline else None
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1590,32 +2219,33 @@ def page_progress():
     ex_labels  = [f"Ex {ex['id']}\n{ex['title'].split(':')[-1].strip()[:12]}" for ex in EXERCISES]
     ex_scores  = [st.session_state.ex_states[ex["id"]]["best_score"] or 0 for ex in EXERCISES]
     ex_done    = [st.session_state.ex_states[ex["id"]]["completed"] for ex in EXERCISES]
-    bar_colors = ["#2ec4b6" if d else ("#5ba8e5" if s > 0 else "#1a3555")
+    bar_colors = ["#b094d4" if d else ("#90bcd4" if s > 0 else "rgba(200,190,220,0.3)")
                   for s, d in zip(ex_scores, ex_done)]
 
-    fig, ax = plt.subplots(figsize=(8, 3.4), facecolor="#0d1f35")
-    ax.set_facecolor("#08131f")
+    fig, ax = plt.subplots(figsize=(8, 3.4), facecolor="#f5f0fa")
+    ax.set_facecolor("#f0eaf8")
     bars = ax.bar(ex_labels, ex_scores, color=bar_colors, edgecolor="none",
                   width=0.55, zorder=2)
-    ax.axhline(TARGET_CLARITY, color="#f0c040", linewidth=1.4, linestyle="--",
-               alpha=0.75, label=f"Target {TARGET_CLARITY}%", zorder=3)
+    target_values = [_ex_target(ex["id"]) for ex in EXERCISES]
+    ax.plot(ex_labels, target_values, color="#e8a0bf", linewidth=1.4,
+            linestyle="--", alpha=0.75, label="Target per exercise", zorder=3)
     if bl.get("clarity"):
-        ax.axhline(bl["clarity"], color="#5ba8e5", linewidth=1.1, linestyle=":",
+        ax.axhline(bl["clarity"], color="#90bcd4", linewidth=1.1, linestyle=":",
                    alpha=0.70, label=f"Baseline {bl['clarity']}%", zorder=3)
     for bar, score in zip(bars, ex_scores):
         if score > 0:
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1.5,
                     f"{score:.0f}%", ha="center", va="bottom",
-                    color="#c8dcea", fontsize=8.5, fontweight="600")
+                    color="#5a4878", fontsize=8.5, fontweight="600")
     ax.set_ylim(0, 110)
-    ax.set_ylabel("Score (%)", color="#7fa8c8", fontsize=9)
-    ax.tick_params(colors="#7fa8c8", labelsize=8)
-    ax.set_title("Exercise Best Scores", color="#c0d8ee", fontsize=11, fontweight="bold", pad=8)
+    ax.set_ylabel("Score (%)", color="#9b8ab0", fontsize=9)
+    ax.tick_params(colors="#9b8ab0", labelsize=8)
+    ax.set_title("Exercise Best Scores", color="#5a4878", fontsize=11, fontweight="bold", pad=8)
     for sp in ax.spines.values():
-        sp.set_edgecolor("#1a3050")
-    ax.grid(axis="y", color="#1a3050", linewidth=0.6, linestyle="--", alpha=0.7, zorder=1)
-    legend = ax.legend(facecolor="#0d1f35", edgecolor="#1a3050",
-                       labelcolor="#7fa8c8", fontsize=8.5)
+        sp.set_edgecolor("rgba(176,148,212,0.15)")
+    ax.grid(axis="y", color="rgba(176,148,212,0.15)", linewidth=0.6, linestyle="--", alpha=0.7, zorder=1)
+    legend = ax.legend(facecolor="#f5f0fa", edgecolor="rgba(176,148,212,0.15)",
+                       labelcolor="#9b8ab0", fontsize=8.5)
     plt.tight_layout(pad=1.2)
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
@@ -1629,6 +2259,179 @@ def page_progress():
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: LOGIN / REGISTER
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _severity(count: int) -> str:
+    if count == 0:  return "None"
+    if count <= 2:  return "Mild"
+    if count <= 5:  return "Moderate"
+    return "Frequent"
+
+
+def _home_header():
+    st.markdown(
+        '<div class="clay-card" style="text-align:center;padding:40px 20px;'
+        'background:rgba(255,255,255,0.28);'
+        'backdrop-filter:blur(20px);'
+        '-webkit-backdrop-filter:blur(20px);'
+        'border:1px solid rgba(255,255,255,0.52);">'
+        '<div style="font-size:56px;font-weight:900;color:#5a4878;letter-spacing:-1.5px;margin-bottom:12px;">'
+        'Stutter <span style="background:linear-gradient(90deg,#b094d4,#f0a080);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Clarity</span> Coach'
+        '</div>'
+        '<div style="font-size:18px;color:#9b8ab0;line-height:1.6;max-width:600px;margin:0 auto;">'
+        'Your personal speech fluency companion — record, analyse, and improve with AI-powered guidance.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _exercise_card(ex: dict, state: dict, target: int):
+    completed = state["completed"]
+    unlocked  = state["unlocked"]
+    best_score = state.get("best_score")
+    attempts = state.get("attempts", 0)
+
+    # Status styling
+    if completed:
+        status_color = "#7ec8a0"
+        status_text = "COMPLETE"
+        status_bg = "#7ec8a022"
+    elif unlocked:
+        status_color = "#90bcd4"
+        status_text = "UNLOCKED"
+        status_bg = "#90bcd422"
+    else:
+        status_color = "#9b8ab0"
+        status_text = "LOCKED"
+        status_bg = "rgba(255,255,255,0.22)"
+
+    # Score badge
+    score_badge = ""
+    if best_score is not None:
+        score_color = "#7ec8a0" if best_score >= target else "#f0a080"
+        score_badge = f'<div style="display:inline-block;background:{score_color}22;color:{score_color};padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;margin-top:8px;">Best: {best_score}%</div>'
+
+    st.markdown(
+        f'<div class="clay-card" style="opacity:{1 if unlocked or completed else 0.6};">'
+        f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">'
+        f'<div style="flex:1;">'
+        f'<div style="font-size:18px;font-weight:700;color:#5a4878;margin-bottom:4px;">{ex["title"]}</div>'
+        f'<div style="font-size:13px;color:#9b8ab0;margin-bottom:8px;">{ex["difficulty"]} • {ex["focus"]}</div>'
+        f'<div style="display:inline-block;background:{status_bg};color:{status_color};padding:3px 10px;border-radius:99px;font-size:10px;font-weight:700;">{status_text}</div>'
+        f'{score_badge}'
+        f'</div>'
+        f'<div style="margin-left:16px;">'
+        f'<div style="font-size:24px;font-weight:800;color:#b094d4;">{target}%</div>'
+        f'<div style="font-size:10px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.5px;">Target</div>'
+        f'</div>'
+        f'</div>'
+        f'<div style="font-size:12px;color:#9b8ab0;margin-top:8px;">{ex["instruction"]}</div>'
+        f'{f"<div style=\"font-size:11px;color:#9b8ab0;margin-top:6px;\">Attempts: {attempts}</div>" if attempts > 0 else ""}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _event_metrics(result: dict):
+    dur = result.get("original_duration", 0)
+    pau = result.get("pause_events", 0)
+    pro = result.get("prolongation_events", 0)
+    rep = result.get("repetition_events", 0)
+    blk = result.get("block_events", 0)
+
+    st.markdown(
+        '<div class="clay-card" style="background:rgba(255,255,255,0.28);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.52);box-shadow:0 6px 24px rgba(160,130,200,0.18), 0 1px 0 rgba(255,255,255,0.60) inset;padding:20px;">'
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;">'
+        f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
+        f'<div style="font-size:24px;font-weight:800;color:#b094d4;margin-bottom:4px;">{dur:.1f}s</div>'
+        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Duration</div>'
+        f'</div>'
+        f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
+        f'<div style="font-size:24px;font-weight:800;color:#90bcd4;margin-bottom:4px;">{pau}</div>'
+        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Pauses ({_severity(pau)})</div>'
+        f'</div>'
+        f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
+        f'<div style="font-size:24px;font-weight:800;color:#f0a080;margin-bottom:4px;">{pro}</div>'
+        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Prolongations ({_severity(pro)})</div>'
+        f'</div>'
+        f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
+        f'<div style="font-size:24px;font-weight:800;color:#d490a0;margin-bottom:4px;">{rep}</div>'
+        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Repetitions ({_severity(rep)})</div>'
+        f'</div>'
+        f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
+        f'<div style="font-size:24px;font-weight:800;color:#e86090;margin-bottom:4px;">{blk}</div>'
+        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Blocks ({_severity(blk)})</div>'
+        f'</div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _read_aloud_box(text: str):
+    st.markdown(
+        f'<div class="clay-card-inset" style="padding:24px;margin:16px 0;">'
+        f'<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#b094d4;text-transform:uppercase;margin-bottom:8px;">Read This Aloud</div>'
+        f'<div style="font-size:20px;line-height:1.8;color:#5a4878;font-weight:500;text-align:center;padding:20px;background:rgba(176,148,212,0.08);border-radius:12px;border:1px solid rgba(176,148,212,0.20);">{text}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_sidebar():
+    st.markdown(
+        '<div class="clay-card" style="text-align:center;padding:20px;margin-bottom:16px;">'
+        '<div style="font-size:28px;color:#b094d4;margin-bottom:8px;">🌊</div>'
+        '<div style="font-size:17px;font-weight:700;background:linear-gradient(90deg,#90bcd4,#b094d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Clarity Coach</div>'
+        f'<div style="font-size:12px;color:#9b8ab0;margin-top:4px;">{st.session_state.get("username", "")}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    nav = st.radio(
+        "Navigation",
+        options=_NAV_OPTIONS,
+        index=_PAGE_IDX.get(st.session_state.page, 0),
+    )
+
+    desired = _NAV_PAGE_MAP[nav]
+    if desired != st.session_state.page:
+        _nav_to(desired)
+
+    st.divider()
+
+    # Quick stats
+    if st.session_state.baseline:
+        st.metric("Baseline", f"{st.session_state.baseline['clarity']}%")
+
+    completed_count = sum(
+        1 for s in st.session_state.ex_states.values() if s["completed"]
+    )
+    st.metric("Completed", f"{completed_count} / {len(EXERCISES)}")
+    st.caption(f"Target per exercise: **{_ex_target(st.session_state.get('ex_open', 0))}%**")
+
+    st.divider()
+
+    if st.button("Reset All Progress", use_container_width=True):
+        uid = st.session_state.get("user_id")
+        uname = st.session_state.get("username")
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.session_state.user_id  = uid
+        st.session_state.username = uname
+        if uid:
+            with _db() as conn:
+                conn.execute("DELETE FROM progress WHERE user_id = ?", (uid,))
+        st.rerun()
+
+    if st.button("Log Out", use_container_width=True):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
 def page_login():
@@ -1674,10 +2477,6 @@ def page_login():
                     st.error(msg)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────────────────────
-
 def main():
     st.set_page_config(
         page_title="Stutter Clarity Coach",
@@ -1696,57 +2495,7 @@ def main():
     _init_state()
 
     # ── Sidebar ──────────────────────────────────────────────────────────
-    with st.sidebar:
-        st.markdown(
-            f'<div style="text-align:center;padding:14px 0 6px;">'
-            f'<div style="font-size:28px;color:#2ec4b6;"><i class="fa-solid fa-waveform-lines"></i></div>'
-            f'<div style="font-size:17px;font-weight:700;background:linear-gradient(90deg,#5ba8e5,#2ec4b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Clarity Coach</div>'
-            f'<div style="font-size:12px;color:#5e8aaa;margin-top:2px;">{st.session_state.get("username", "")}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.divider()
-
-        nav = st.radio(
-            "Navigation",
-            options=_NAV_OPTIONS,
-            index=_PAGE_IDX.get(st.session_state.page, 0),
-        )
-
-        desired = _NAV_PAGE_MAP[nav]
-        if desired != st.session_state.page:
-            _nav_to(desired)
-
-        st.divider()
-
-        # Quick stats
-        if st.session_state.baseline:
-            st.metric("Baseline", f"{st.session_state.baseline['clarity']}%")
-
-        completed_count = sum(
-            1 for s in st.session_state.ex_states.values() if s["completed"]
-        )
-        st.metric("Completed", f"{completed_count} / {len(EXERCISES)}")
-        st.caption(f"Target per exercise: **{TARGET_CLARITY}%**")
-
-        st.divider()
-
-        if st.button("Reset All Progress", use_container_width=True):
-            uid = st.session_state.get("user_id")
-            uname = st.session_state.get("username")
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
-            st.session_state.user_id  = uid
-            st.session_state.username = uname
-            if uid:
-                with _db() as conn:
-                    conn.execute("DELETE FROM progress WHERE user_id = ?", (uid,))
-            st.rerun()
-
-        if st.button("Log Out", use_container_width=True):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
-            st.rerun()
+    _render_sidebar()
 
     # ── Route ────────────────────────────────────────────────────────────
     page = st.session_state.page
