@@ -147,6 +147,30 @@ def _load_progress(user_id: int):
         st.session_state.ex_states = {int(k): v for k, v in loaded.items()}
 
 
+def _get_streak() -> int:
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return 0
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT updated_at FROM progress WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+    if not row:
+        return 0
+    try:
+        from datetime import datetime, timedelta
+        last = datetime.fromisoformat(row[0])
+        diff = (datetime.now() - last).days
+        if diff <= 1:
+            streak = st.session_state.get("streak", 1)
+            if diff == 0:
+                return max(streak, 1)
+        return 1
+    except Exception:
+        return 1
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,6 +192,7 @@ EXERCISES = [
         "instruction": "Read slowly and smoothly. Focus on keeping a steady breath the whole way through.",
         "text":        "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colours.",
         "tip_type":    "breathing",
+        "duration":    "2 min",
     },
     {
         "id":          1,
@@ -177,6 +202,7 @@ EXERCISES = [
         "instruction": "Open your mouth wide for each vowel. Feel each sound start gently and smoothly.",
         "text":        "I often eat ice cream in Iowa on a warm August afternoon. Each evening I enjoy an easy, open conversation with an old friend.",
         "tip_type":    "articulation",
+        "duration":    "2 min",
     },
     {
         "id":          2,
@@ -186,6 +212,7 @@ EXERCISES = [
         "instruction": "Say each S sound gently — no hissing or forcing. Pause briefly between phrases if needed.",
         "text":        "She sells seashells by the seashore. The shells she sells are surely seashells. So if she sells shells on the seashore, I am sure she sells seashore shells.",
         "tip_type":    "pacing",
+        "duration":    "3 min",
     },
     {
         "id":          3,
@@ -195,6 +222,7 @@ EXERCISES = [
         "instruction": "Start each P word gently. Relax your lips before each word and do not force air.",
         "text":        "Peter Piper picked a peck of pickled peppers. A peck of pickled peppers Peter Piper picked. If Peter Piper picked a peck of pickled peppers, where is the peck of pickled peppers Peter Piper picked?",
         "tip_type":    "tension",
+        "duration":    "3 min",
     },
     {
         "id":          4,
@@ -204,6 +232,7 @@ EXERCISES = [
         "instruction": "Take a full breath before starting. Speak at a comfortable, steady pace — do not rush.",
         "text":        "Whether the weather is warm or whether the weather is cold, we will weather the weather whatever the weather, whether we like it or not. The world is full of wonderful, worthy words well worth saying.",
         "tip_type":    "pacing",
+        "duration":    "5 min",
     },
     {
         "id":          5,
@@ -213,6 +242,7 @@ EXERCISES = [
         "instruction": "Describe your morning routine in at least five complete sentences. Speak naturally at your own pace — there is no rush.",
         "text":        "Speak freely about your morning routine. Aim for five or more sentences.",
         "tip_type":    "confidence",
+        "duration":    "5 min",
     },
     {
         "id":          6,
@@ -222,6 +252,7 @@ EXERCISES = [
         "instruction": "Touch your tongue to the ridge just behind your top teeth very lightly. Avoid any pushing or hard stops.",
         "text":        "Two tiny turtles trotted down the dusty dirt road toward the tall dark trees. The determined duo did not dawdle — they danced and darted through the dew-damp dell.",
         "tip_type":    "tongue",
+        "duration":    "3 min",
     },
     {
         "id":          7,
@@ -231,6 +262,7 @@ EXERCISES = [
         "instruction": "Let the back of your tongue drop gently for each K and G. Keep your throat loose — no squeezing.",
         "text":        "How much wood would a woodchuck chuck if a woodchuck could chuck wood? A good cook could cook as many cookies as a good cook who could cook cookies.",
         "tip_type":    "tongue",
+        "duration":    "3 min",
     },
     {
         "id":          8,
@@ -240,6 +272,7 @@ EXERCISES = [
         "instruction": "Let L and R flow without stopping. Keep your tongue relaxed and your voice continuous through each word.",
         "text":        "Red lorry, yellow lorry. Round and round the rugged rock the ragged rascal ran. Lovely lilies lined the long, leafy lane leading to the little library by the lake.",
         "tip_type":    "tongue",
+        "duration":    "3 min",
     },
     {
         "id":          9,
@@ -249,6 +282,7 @@ EXERCISES = [
         "instruction": "Read each syllable as if it has its own beat. Slow right down — slower than you think is necessary. Tap a finger for each syllable.",
         "text":        "The early bird catches the worm, but the second mouse gets the cheese. Take your time, choose your words, and let each sound arrive fully before the next one begins.",
         "tip_type":    "rhythm",
+        "duration":    "3 min",
     },
     {
         "id":          10,
@@ -258,6 +292,7 @@ EXERCISES = [
         "instruction": "Rest your top teeth gently on your lower lip. Let the air flow out continuously — do not stop the sound between words.",
         "text":        "Five fine fresh fish for five fortunate fishermen. Vincent's vivid violet vase held five very vibrant flowers. Fluffy feathers flew far from the old farmhouse fence.",
         "tip_type":    "airflow",
+        "duration":    "3 min",
     },
     {
         "id":          11,
@@ -267,6 +302,7 @@ EXERCISES = [
         "instruction": "Read each question aloud, pause one second, then answer it in a full sentence. Do not rush your answer.",
         "text":        "What is your favourite season and why? Where would you most like to travel and what would you do there? Describe a skill you are proud of and how you learned it.",
         "tip_type":    "confidence",
+        "duration":    "5 min",
     },
     {
         "id":          12,
@@ -276,6 +312,7 @@ EXERCISES = [
         "instruction": "Read like a news presenter — calm, clear, and measured. Pause naturally at commas and full stops. Project your voice slightly.",
         "text":        "Scientists have discovered that regular exercise improves not only physical health but also mental clarity and emotional resilience. Experts recommend at least thirty minutes of moderate activity each day. Communities worldwide are now building more parks and walking paths to encourage an active lifestyle.",
         "tip_type":    "pacing",
+        "duration":    "5 min",
     },
     {
         "id":          13,
@@ -285,6 +322,7 @@ EXERCISES = [
         "instruction": "Look at the prompt below and speak for at least 60 seconds. Use descriptive language. Pause whenever you need to — there is no time pressure.",
         "text":        "Tell a story about the most interesting place you have ever visited. Describe what it looked like, what you did there, and how it made you feel. Aim for at least eight sentences.",
         "tip_type":    "confidence",
+        "duration":    "5 min",
     },
 ]
 
@@ -735,19 +773,16 @@ def _ex_target(ex_id: int) -> int:
 
 
 def _clarity_color(score: float) -> str:
-    if score >= 80:  return "#7ec8a0"   # soft mint
-    if score >= 70:  return "#e8c060"   # warm gold
-    if score >= 50:  return "#f0a080"   # soft peach
-    return "#d4909a"                    # dusty rose
+    if score >= 80:  return "#70c890"
+    if score >= 70:  return "#e0b840"
+    if score >= 50:  return "#f0a090"
+    return "#d090b0"
 
 
 def _clarity_label(score: float) -> str:
-    if score >= 80:
-        return "Fully Fluent"
-    if score >= 70:
-        return "Efficient"
-    if score >= 50:
-        return "Moderate Stutter"
+    if score >= 80:  return "Fully Fluent"
+    if score >= 70:  return "Efficient"
+    if score >= 50:  return "Moderate Stutter"
     return "Needs Attention"
 
 
@@ -793,6 +828,7 @@ def _init_state():
             }
             for i in range(len(EXERCISES))
         },
+        "sidebar_visible": True,  # Sidebar visibility state
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -806,87 +842,994 @@ def _init_state():
 def _inject_css():
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,800;0,900;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+
     #MainMenu{visibility:hidden!important;}
-    header[data-testid="stHeader"]{display:none!important;}
     footer{visibility:hidden!important;}
-    [data-testid="stToolbar"]{display:none!important;}
-    [data-testid="stDecoration"]{display:none!important;}
-    html,body{background:linear-gradient(135deg,#e8d5f5 0%,#d4e8f8 25%,#fce0ef 55%,#faecd8 80%,#e8d5f5 100%)!important;min-height:100vh!important;}
-    .stApp{background:linear-gradient(135deg,#e8d5f5 0%,#d4e8f8 25%,#fce0ef 55%,#faecd8 80%,#e8d5f5 100%) fixed!important;min-height:100vh!important;}
-    .stApp>div,section[data-testid="stMain"],section[data-testid="stMain"]>div,section[data-testid="stMain"]>div>div,.main,.block-container,div[data-testid="stVerticalBlockBorderWrapper"],div[data-testid="stVerticalBlock"],.element-container{background:transparent!important;}
-    .stApp::before{content:'';position:fixed;top:-20%;left:-10%;width:55%;height:55%;background:radial-gradient(ellipse,rgba(200,170,240,0.45) 0%,rgba(180,210,250,0.25) 40%,transparent 70%);border-radius:50% 60% 40% 70%;animation:floatBlob1 14s ease-in-out infinite;pointer-events:none;z-index:0;filter:blur(40px);}
-    .stApp::after{content:'';position:fixed;bottom:-15%;right:-10%;width:50%;height:50%;background:radial-gradient(ellipse,rgba(255,182,220,0.40) 0%,rgba(180,220,255,0.25) 40%,transparent 70%);border-radius:60% 40% 70% 30%;animation:floatBlob2 18s ease-in-out infinite;pointer-events:none;z-index:0;filter:blur(40px);}
-    @keyframes floatBlob1{0%,100%{transform:translate(0,0) scale(1) rotate(0deg);}33%{transform:translate(3%,5%) scale(1.06) rotate(8deg);}66%{transform:translate(-2%,2%) scale(0.96) rotate(-5deg);}}
-    @keyframes floatBlob2{0%,100%{transform:translate(0,0) scale(1) rotate(0deg);}33%{transform:translate(-4%,-3%) scale(1.05) rotate(-8deg);}66%{transform:translate(2%,-2%) scale(0.97) rotate(6deg);}}
+
+    * {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        -webkit-font-smoothing: antialiased !important;
+        text-rendering: optimizeLegibility !important;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Playfair Display', serif !important;
+        font-weight: 900 !important;
+        color: #2d1a0e !important;
+        -webkit-text-fill-color: #2d1a0e !important;
+        background: none !important;
+        letter-spacing: -0.5px !important;
+        line-height: 1.2 !important;
+    }
+
+    h1 { font-size: 2.6rem !important; }
+    h2 { font-size: 1.9rem !important; }
+    h3 { font-size: 1.3rem !important; }
+
+    p, li, span, div, label, caption, a {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        color: #2d1a0e !important;
+        font-weight: 500 !important;
+    }
+
+    * {
+        transition: box-shadow 0.25s ease, 
+                    transform 0.25s ease !important;
+    }
+
+    .stApp{
+        background:linear-gradient(135deg,#d0c0e0 0%,#b8d4e8 30%,#e0c8dc 60%,#e2d4c0 85%,#d0c0e0 100%)!important;
+        background-attachment:fixed!important;
+        min-height:100vh!important;
+    }
+    .stApp>div,section[data-testid="stMain"],
+    section[data-testid="stMain"]>div,
+    section[data-testid="stMain"]>div>div,
+    .main,.block-container,
+    div[data-testid="stVerticalBlockBorderWrapper"],
+    div[data-testid="stVerticalBlock"],
+    .element-container{background:transparent!important;}
+
+    /* Floating aurora blobs */
+    body::before{
+        content:'';position:fixed;top:-25%;left:-15%;
+        width:60%;height:60%;
+        background:radial-gradient(ellipse,rgba(196,160,232,0.50) 0%,rgba(170,210,245,0.30) 45%,transparent 70%);
+        border-radius:55% 65% 45% 75%;
+        animation:blob1 16s ease-in-out infinite;
+        pointer-events:none;z-index:0;filter:blur(45px);
+    }
+    body::after{
+        content:'';position:fixed;bottom:-20%;right:-15%;
+        width:55%;height:55%;
+        background:radial-gradient(ellipse,rgba(252,170,210,0.45) 0%,rgba(170,215,255,0.28) 45%,transparent 70%);
+        border-radius:65% 45% 75% 35%;
+        animation:blob2 20s ease-in-out infinite;
+        pointer-events:none;z-index:0;filter:blur(45px);
+    }
+    @keyframes blob1{
+        0%,100%{transform:translate(0,0) scale(1) rotate(0deg);}
+        25%{transform:translate(4%,6%) scale(1.08) rotate(10deg);}
+        50%{transform:translate(-3%,3%) scale(0.94) rotate(-8deg);}
+        75%{transform:translate(2%,-4%) scale(1.04) rotate(5deg);}
+    }
+    @keyframes blob2{
+        0%,100%{transform:translate(0,0) scale(1) rotate(0deg);}
+        25%{transform:translate(-5%,-4%) scale(1.06) rotate(-10deg);}
+        50%{transform:translate(3%,-2%) scale(0.96) rotate(8deg);}
+        75%{transform:translate(-2%,4%) scale(1.03) rotate(-5deg);}
+    }
+
     html,body,[class*="css"]{font-family:'DM Sans',sans-serif!important;}
-    .block-container{padding-top:2rem!important;}
-    h1{font-weight:800!important;font-size:2.2rem!important;background:linear-gradient(90deg,#8060b0,#c060a0,#6090c0);-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important;background-clip:text!important;}
-    h2,h3{color:#5a4878!important;font-weight:700!important;}
-    p,li,caption{color:#6b5a8a!important;}
-    [data-testid="stMarkdownContainer"] p{color:#6b5a8a!important;}
-    [data-testid="stCaptionContainer"] p{color:#9b8ab0!important;font-size:12px!important;}
-    span{color:#6b5a8a!important;}
-    label{color:#6b5a8a!important;}
-    [data-testid="stSidebar"]{background:rgba(255,255,255,0.28)!important;backdrop-filter:blur(24px)!important;-webkit-backdrop-filter:blur(24px)!important;border-right:1px solid rgba(255,255,255,0.50)!important;box-shadow:4px 0 32px rgba(160,130,200,0.18)!important;}
+
+    /* TEXT */
+    .stApp,.stApp *{color:#2a1a4a!important;}
+    h1 {
+    font-family: 'Playfair Display', serif !important;
+    font-weight: 900 !important;
+    font-size: 2.6rem !important;
+    color: #2d1a0e !important;
+    -webkit-text-fill-color: #2d1a0e !important;
+    background: none !important;
+    letter-spacing: -0.5px !important;
+    line-height: 1.15 !important;
+    text-shadow: 0 2px 12px rgba(180,100,60,0.15) !important;
+}
+    h2 {
+    font-family: 'Playfair Display', serif !important;
+    font-weight: 800 !important;
+    font-size: 1.9rem !important;
+    color: #3a2010 !important;
+    -webkit-text-fill-color: #3a2010 !important;
+    background: none !important;
+    letter-spacing: -0.3px !important;
+}
+h3 {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 800 !important;
+    font-size: 1.15rem !important;
+    color: #3a2010 !important;
+    -webkit-text-fill-color: #3a2010 !important;
+    background: none !important;
+    letter-spacing: 0.1px !important;
+}
+    p, li {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #2d1a0e !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    line-height: 1.75 !important;
+}
+[data-testid="stMarkdownContainer"] p {
+    color: #2d1a0e !important;
+    font-weight: 500 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+[data-testid="stCaptionContainer"] p {
+    color: #7a5540 !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+span {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #2d1a0e !important;
+}
+label {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #2d1a0e !important;
+}
+
+    /* SIDEBAR */
+    [data-testid="stSidebar"]{
+        background:rgba(255,255,255,0.32)!important;
+        backdrop-filter:blur(28px)!important;
+        -webkit-backdrop-filter:blur(28px)!important;
+        border-right:1.5px solid rgba(255,255,255,0.55)!important;
+        box-shadow:
+            4px 0 8px rgba(120,60,20,0.08),
+            8px 0 24px rgba(120,60,20,0.12),
+            16px 0 48px rgba(120,60,20,0.10) !important;
+        display: block !important;
+        visibility: visible !important;
+        width: auto !important;
+        min-width: 250px !important;
+    }
     [data-testid="stSidebar"]>div{background:transparent!important;}
-    [data-testid="stSidebar"] *{color:#6b5a8a!important;}
-    [data-testid="stSidebar"] .stRadio label{color:#5a4878!important;font-weight:600!important;font-size:14px!important;}
-    [data-testid="stSidebar"] [data-testid="stMetric"]{background:rgba(255,255,255,0.35)!important;backdrop-filter:blur(12px)!important;border-radius:16px!important;padding:14px 16px!important;border:1px solid rgba(255,255,255,0.55)!important;box-shadow:0 4px 20px rgba(160,130,200,0.18)!important;}
-    [data-testid="stSidebar"] [data-testid="stMetricValue"]{background:linear-gradient(90deg,#b094d4,#90bcd4)!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important;background-clip:text!important;font-size:1.8rem!important;font-weight:800!important;}
-    [data-testid="stSidebar"] [data-testid="stMetricLabel"]{color:#9b8ab0!important;font-size:11px!important;text-transform:uppercase!important;letter-spacing:0.8px!important;}
-    .stButton>button{background:rgba(255,255,255,0.35)!important;color:#5a4878!important;border:1px solid rgba(255,255,255,0.60)!important;border-radius:16px!important;font-weight:700!important;font-size:14px!important;padding:10px 24px!important;backdrop-filter:blur(12px)!important;box-shadow:0 4px 20px rgba(160,130,200,0.20),0 1px 0 rgba(255,255,255,0.60) inset!important;transition:all 0.22s ease!important;}
-    .stButton>button:hover{background:rgba(255,255,255,0.50)!important;transform:translateY(-2px)!important;box-shadow:0 8px 28px rgba(160,130,200,0.28),0 1px 0 rgba(255,255,255,0.70) inset!important;}
-    .stButton>button[kind="primary"]{background:linear-gradient(135deg,rgba(192,150,220,0.75),rgba(140,190,220,0.75))!important;color:white!important;border:1px solid rgba(255,255,255,0.50)!important;box-shadow:0 6px 24px rgba(176,148,212,0.40),0 1px 0 rgba(255,255,255,0.50) inset!important;}
-    .stButton>button[kind="primary"]:hover{background:linear-gradient(135deg,rgba(210,170,235,0.85),rgba(160,210,235,0.85))!important;}
-    .stButton>button[disabled]{background:rgba(255,255,255,0.18)!important;color:rgba(107,90,138,0.35)!important;border-color:rgba(255,255,255,0.25)!important;}
-    [data-testid="stMetric"]{background:rgba(255,255,255,0.30)!important;backdrop-filter:blur(16px)!important;-webkit-backdrop-filter:blur(16px)!important;border-radius:20px!important;padding:20px!important;border:1px solid rgba(255,255,255,0.55)!important;box-shadow:0 6px 24px rgba(160,130,200,0.18),0 1px 0 rgba(255,255,255,0.70) inset!important;}
-    [data-testid="stMetricValue"]{background:linear-gradient(90deg,#b094d4,#90bcd4)!important;-webkit-background-clip:text!important;-webkit-text-fill-color:transparent!important;background-clip:text!important;font-size:2rem!important;font-weight:800!important;}
-    [data-testid="stMetricLabel"]{color:#9b8ab0!important;font-size:11px!important;font-weight:600!important;text-transform:uppercase!important;letter-spacing:0.8px!important;}
-    [data-testid="stProgress"]>div{background:rgba(255,255,255,0.30)!important;border-radius:99px!important;border:1px solid rgba(255,255,255,0.50)!important;backdrop-filter:blur(8px)!important;}
-    [data-testid="stProgress"]>div>div{background:linear-gradient(90deg,#c4a0d8,#90bcd4,#80c8b0)!important;border-radius:99px!important;}
-    .stTextInput input,.stTextInput>div>div>input{background:rgba(255,255,255,0.35)!important;color:#3d2d5c!important;border:1px solid rgba(255,255,255,0.60)!important;border-radius:14px!important;font-size:15px!important;backdrop-filter:blur(12px)!important;padding:12px 16px!important;}
-    .stTextInput label{color:#9b8ab0!important;font-size:12px!important;font-weight:600!important;letter-spacing:0.5px!important;text-transform:uppercase!important;}
-    .stTabs [data-baseweb="tab-list"]{background:rgba(255,255,255,0.25)!important;backdrop-filter:blur(16px)!important;border-radius:16px!important;padding:5px!important;border:1px solid rgba(255,255,255,0.45)!important;gap:4px!important;border-bottom:none!important;}
-    .stTabs [data-baseweb="tab"]{color:#9b8ab0!important;font-weight:600!important;border-radius:12px!important;border:none!important;padding:8px 22px!important;background:transparent!important;}
-    .stTabs [data-baseweb="tab"][aria-selected="true"]{background:rgba(255,255,255,0.65)!important;color:#5a4878!important;font-weight:700!important;box-shadow:0 4px 14px rgba(160,130,200,0.22)!important;}
-    .stSuccess{background:rgba(126,200,160,0.18)!important;border:none!important;border-left:4px solid #7ec8a0!important;border-radius:14px!important;backdrop-filter:blur(12px)!important;}
-    .stWarning{background:rgba(232,200,120,0.18)!important;border:none!important;border-left:4px solid #e8c060!important;border-radius:14px!important;backdrop-filter:blur(12px)!important;}
-    .stError{background:rgba(212,144,154,0.18)!important;border:none!important;border-left:4px solid #d490a0!important;border-radius:14px!important;backdrop-filter:blur(12px)!important;}
-    .stInfo{background:rgba(144,188,212,0.18)!important;border:none!important;border-left:4px solid #90bcd4!important;border-radius:14px!important;backdrop-filter:blur(12px)!important;}
-    div[data-testid="stAlert"]{backdrop-filter:blur(12px)!important;border-radius:14px!important;}
-    div[data-testid="stAlert"] p{color:#5a4878!important;font-weight:500!important;}
-    hr{border:none!important;height:1px!important;background:linear-gradient(90deg,transparent,rgba(176,148,212,0.35),transparent)!important;margin:20px 0!important;}
-    audio{border-radius:14px!important;width:100%!important;}
+    [data-testid="stSidebar"] * {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #2d1a0e !important;
+}
+[data-testid="stSidebar"] .stRadio label {
+    color: #2d1a0e !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+[data-testid="stSidebar"] [data-testid="stMetricValue"] {
+    color: #c4703a !important;
+    -webkit-text-fill-color: #c4703a !important;
+    background: none !important;
+    font-size: 1.9rem !important;
+    font-weight: 800 !important;
+    font-family: 'Cormorant Garamond', serif !important;
+}
+[data-testid="stSidebar"] [data-testid="stMetricLabel"] {
+    color: #c4906a !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.8px !important;
+}
+
+    /* BUTTONS */
+    .stButton > button {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 14px !important;
+        color: #2d1a0e !important;
+        letter-spacing: 0.2px !important;
+        background:rgba(255,255,255,0.40)!important;
+        border:1.5px solid rgba(255,255,255,0.65)!important;
+        border-radius:18px!important;
+        padding:10px 24px!important;
+        backdrop-filter:blur(14px)!important;
+        box-shadow:
+            0 2px 4px rgba(120,60,20,0.10),
+            0 6px 16px rgba(120,60,20,0.14),
+            0 16px 32px rgba(120,60,20,0.10),
+            0 1px 0 rgba(255,255,255,0.72) inset !important;
+        transition: all 0.25s ease !important;
+    }
+
+    /* SIDEBAR TOGGLE BUTTON */
+    [data-testid="collapsedControl"] {
+        background: rgba(255,255,255,0.55) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border-radius: 0 14px 14px 0 !important;
+        border: 1.5px solid rgba(255,255,255,0.70) !important;
+        border-left: none !important;
+        box-shadow: 
+            4px 0 16px rgba(120,60,20,0.12),
+            8px 0 32px rgba(120,60,20,0.08) !important;
+        padding: 12px 8px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+    }
+    [data-testid="collapsedControl"]:hover {
+        background: rgba(255,255,255,0.75) !important;
+        box-shadow: 
+            4px 0 20px rgba(120,60,20,0.18),
+            8px 0 40px rgba(120,60,20,0.12) !important;
+    }
+    [data-testid="collapsedControl"] svg {
+        fill: #2d1a0e !important;
+        width: 18px !important;
+        height: 18px !important;
+    }
+
+    /* SIDEBAR EXPAND BUTTON */
+    button[data-testid="baseButton-headerNoPadding"] {
+        background: rgba(255,255,255,0.45) !important;
+        backdrop-filter: blur(14px) !important;
+        border-radius: 10px !important;
+        border: 1.5px solid rgba(255,255,255,0.65) !important;
+        box-shadow: 0 4px 14px rgba(120,60,20,0.12) !important;
+    }
+    button[data-testid="baseButton-headerNoPadding"]:hover {
+        background: rgba(255,255,255,0.65) !important;
+        transform: translateX(-2px) !important;
+    }
+    button[data-testid="baseButton-headerNoPadding"] svg {
+        fill: #2d1a0e !important;
+    }
+
+    /* TOP HEADER BAR */
+    header[data-testid="stHeader"] {
+        background: rgba(255,255,255,0.20) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border-bottom: 1px solid rgba(255,255,255,0.40) !important;
+        box-shadow: 0 2px 20px rgba(120,60,20,0.08) !important;
+        height: 3rem !important;
+    }
+
+    /* Style the sidebar expand/collapse button 
+       inside the sidebar itself */
+    [data-testid="stSidebarCollapseButton"] {
+        background: rgba(255,255,255,0.45) !important;
+        border-radius: 12px !important;
+        border: 1.5px solid rgba(255,255,255,0.65) !important;
+    }
+    [data-testid="stSidebarCollapseButton"] svg {
+        fill: #2d1a0e !important;
+        color: #2d1a0e !important;
+    }
+    [data-testid="stSidebarCollapseButton"] span {
+        display: none !important;
+    }
+
+    /* Make sure sidebar nav items show icons 
+       not raw text */
+    section[data-testid="stSidebar"] span.material-symbols-rounded,
+    section[data-testid="stSidebar"] span.material-icons {
+        font-family: 'Material Symbols Rounded' !important;
+        font-size: 20px !important;
+        color: #2d1a0e !important;
+    }
+
+    /* Push content below header */
+    .block-container {
+        padding-top: 1.5rem !important;
+        max-width: 1100px !important;
+    }
+
+    /* Fix the main content area to not overlap sidebar */
+    section[data-testid="stMain"] {
+        padding-left: 1rem !important;
+    }
+    .stButton > button:hover {
+        background:rgba(255,255,255,0.58)!important;
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.12),
+            0 10px 24px rgba(120,60,20,0.18),
+            0 24px 48px rgba(120,60,20,0.14),
+            0 1px 0 rgba(255,255,255,0.80) inset !important;
+        transform: translateY(-3px) !important;
+    }
+    .stButton > button[kind="primary"] {
+        background:linear-gradient(135deg,
+            rgba(185,140,225,0.80),
+            rgba(130,185,225,0.80))!important;
+        color:white!important;
+        border:1.5px solid rgba(255,255,255,0.55)!important;
+        box-shadow:
+            0 2px 4px rgba(196,112,58,0.20),
+            0 8px 20px rgba(196,112,58,0.30),
+            0 20px 40px rgba(196,112,58,0.18),
+            0 1px 0 rgba(255,255,255,0.40) inset !important;
+        text-shadow:0 1px 3px rgba(80,40,120,0.25)!important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background:linear-gradient(135deg,
+            rgba(205,160,240,0.90),
+            rgba(150,205,240,0.90))!important;
+        box-shadow:
+            0 4px 8px rgba(196,112,58,0.25),
+            0 12px 28px rgba(196,112,58,0.38),
+            0 28px 56px rgba(196,112,58,0.22) !important;
+        transform: translateY(-3px) !important;
+    }
+    .stButton>button[disabled]{
+        background:rgba(255,255,255,0.20)!important;
+        color:rgba(90,61,138,0.35)!important;
+        border-color:rgba(255,255,255,0.28)!important;
+    }
+
+    /* METRICS */
+    [data-testid="stMetric"]{
+        background:rgba(255,255,255,0.35)!important;
+        backdrop-filter:blur(18px)!important;
+        -webkit-backdrop-filter:blur(18px)!important;
+        border-radius:20px!important;padding:20px!important;
+        border:1.5px solid rgba(255,255,255,0.60)!important;
+        box-shadow:
+            0 2px 4px rgba(120,60,20,0.08),
+            0 8px 20px rgba(120,60,20,0.14),
+            0 20px 40px rgba(120,60,20,0.10),
+            0 1px 0 rgba(255,255,255,0.80) inset !important;
+    }
+    [data-testid="stMetricValue"] {
+    font-family: 'Playfair Display', serif !important;
+    font-size: 2.4rem !important;
+    font-weight: 900 !important;
+    color: #2d1a0e !important;
+    -webkit-text-fill-color: #2d1a0e !important;
+    background: none !important;
+    text-shadow: 0 2px 8px rgba(120,60,20,0.18) !important;
+}
+[data-testid="stMetricLabel"] {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #7a5540 !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.2px !important;
+}
+[data-testid="stMetricDelta"] {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+}
+
+    /* PROGRESS BAR */
+    [data-testid="stProgress"]>div{
+        background:rgba(255,255,255,0.35)!important;
+        border-radius:99px!important;
+        border:1px solid rgba(255,255,255,0.55)!important;
+        backdrop-filter:blur(8px)!important;
+    }
+    [data-testid="stProgress"]>div>div{
+        background:linear-gradient(90deg,#c4a0d8,#90bcd4,#80c8b0)!important;
+        border-radius:99px!important;
+    }
+    [data-testid="stProgress"] p {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 700 !important;
+    color: #2d1a0e !important;
+    font-size: 13px !important;
+}
+
+    /* TEXT INPUTS */
+    .stTextInput input,
+.stTextInput > div > div > input {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #2d1a0e !important;
+    font-weight: 600 !important;
+    font-size: 15px !important;
+}
+.stTextInput label {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #7a5540 !important;
+    font-weight: 700 !important;
+    font-size: 11px !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+}
+    .stTextInput input{
+        background:rgba(255,255,255,0.55)!important;
+        color:#2d1a0e!important;
+        border:1.5px solid rgba(255,255,255,0.70)!important;
+        border-radius:14px!important;font-size:15px!important;
+        backdrop-filter:blur(14px)!important;
+        padding:12px 16px!important;
+        box-shadow:
+            0 2px 6px rgba(120,60,20,0.08),
+            0 6px 16px rgba(120,60,20,0.10),
+            inset 0 1px 0 rgba(255,255,255,0.80) !important;
+    }
+    .stTextInput input:focus{
+        border-color:rgba(196,112,58,0.75)!important;
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.10),
+            0 8px 24px rgba(120,60,20,0.14),
+            0 0 0 3px rgba(196,112,58,0.20),
+            inset 0 1px 0 rgba(255,255,255,0.85) !important;
+        background:rgba(255,255,255,0.70)!important;
+    }
+    .stSelectbox label,
+.stSelectbox div,
+.stSelectbox span {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    color: #2d1a0e !important;
+}
+.stSlider label,
+.stSlider p {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 700 !important;
+    color: #2d1a0e !important;
+}
+
+    /* TABS */
+    .stTabs [data-baseweb="tab-list"]{
+        background:rgba(255,255,255,0.30)!important;
+        backdrop-filter:blur(18px)!important;
+        border-radius:18px!important;padding:5px!important;
+        border:1.5px solid rgba(255,255,255,0.50)!important;
+        gap:4px!important;border-bottom:none!important;
+        box-shadow:
+            0 2px 8px rgba(120,60,20,0.10),
+            0 8px 20px rgba(120,60,20,0.12),
+            0 1px 0 rgba(255,255,255,0.72) inset !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #7a5540 !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    color: #2d1a0e !important;
+    font-weight: 800 !important;
+}
+    .stTabs [data-baseweb="tab"][aria-selected="true"]{
+        background:rgba(255,255,255,0.70)!important;
+        color:#3a1a6a!important;font-weight:700!important;
+        box-shadow:0 4px 16px rgba(150,120,200,0.25)!important;
+    }
+
+    /* ALERTS */
+    .stSuccess{background:rgba(120,200,155,0.20)!important;
+        border:none!important;border-left:4px solid #70c890!important;
+        border-radius:16px!important;backdrop-filter:blur(14px)!important;
+        box-shadow:0 4px 20px rgba(100,180,130,0.18)!important;}
+    .stWarning{background:rgba(235,195,100,0.20)!important;
+        border:none!important;border-left:4px solid #e0b840!important;
+        border-radius:16px!important;backdrop-filter:blur(14px)!important;}
+    .stError{background:rgba(215,130,150,0.20)!important;
+        border:none!important;border-left:4px solid #d08098!important;
+        border-radius:16px!important;backdrop-filter:blur(14px)!important;}
+    .stInfo{background:rgba(130,185,215,0.20)!important;
+        border:none!important;border-left:4px solid #80b0d8!important;
+        border-radius:16px!important;backdrop-filter:blur(14px)!important;}
+    div[data-testid="stAlert"]{
+        backdrop-filter:blur(14px)!important;
+        border-radius:16px!important;
+        box-shadow:
+            0 2px 8px rgba(120,60,20,0.10),
+            0 8px 20px rgba(120,60,20,0.12) !important;
+    }
+    div[data-testid="stAlert"] p{
+        color: #3a1a6a !important;
+        font-weight: 500 !important;
+    }
+
+    /* DIVIDER */
+    hr{border:none!important;height:1px!important;
+       background:linear-gradient(90deg,transparent,rgba(176,140,212,0.40),transparent)!important;
+       margin:20px 0!important;}
+
+    /* AUDIO */
+    audio{border-radius:16px!important;width:100%!important;
+          box-shadow:
+              0 2px 8px rgba(120,60,20,0.12),
+              0 8px 20px rgba(120,60,20,0.16),
+              0 20px 40px rgba(120,60,20,0.10) !important;}
+
+    /* SCROLLBAR */
     ::-webkit-scrollbar{width:5px;}
-    ::-webkit-scrollbar-track{background:rgba(255,255,255,0.20);border-radius:3px;}
-    ::-webkit-scrollbar-thumb{background:rgba(176,148,212,0.40);border-radius:3px;}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
-    @keyframes softPulse{0%,100%{box-shadow:0 8px 32px rgba(176,148,212,0.30),0 1px 0 rgba(255,255,255,0.60) inset;}50%{box-shadow:0 12px 40px rgba(176,148,212,0.42),0 1px 0 rgba(255,255,255,0.70) inset;}}
+    ::-webkit-scrollbar-track{background:rgba(255,255,255,0.25);border-radius:3px;}
+    ::-webkit-scrollbar-thumb{background:rgba(176,140,212,0.45);border-radius:3px;}
+    ::-webkit-scrollbar-thumb:hover{background:rgba(176,140,212,0.65);}
+
+    /* HOME PAGE card color override */
+.home-card {
+    background: rgba(240,133,106,0.38) !important;
+    border: 1.5px solid rgba(255,180,160,0.65) !important;
+    box-shadow:
+        0 2px 4px rgba(180,60,40,0.10),
+        0 8px 20px rgba(180,60,40,0.16),
+        0 24px 48px rgba(180,60,40,0.12),
+        0 1px 0 rgba(255,220,210,0.80) inset !important;
+}
+
+/* PROGRESS PAGE card color override */
+.progress-card {
+    background: rgba(96,168,96,0.38) !important;
+    border: 1.5px solid rgba(160,220,160,0.60) !important;
+    box-shadow:
+        0 2px 4px rgba(40,100,40,0.10),
+        0 8px 20px rgba(40,100,40,0.15),
+        0 24px 48px rgba(40,100,40,0.10),
+        0 1px 0 rgba(200,240,200,0.75) inset !important;
+}
+
+    /* ANIMATIONS */
+    @keyframes fadeUp{from{opacity:0;transform:translateY(18px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes auroraGlow{
+        0%,100%{box-shadow:0 8px 32px rgba(176,140,212,0.30),0 1px 0 rgba(255,255,255,0.65) inset;}
+        50%{box-shadow:0 14px 44px rgba(176,140,212,0.45),0 1px 0 rgba(255,255,255,0.75) inset;}
+    }
     @keyframes barBounce{0%,100%{transform:scaleY(0.35);}50%{transform:scaleY(1.0);}}
     .fade-up{animation:fadeUp 0.5s ease-out both;}
-    .score-pulse{animation:softPulse 2.8s ease-in-out infinite;}
-    .login-hero{text-align:center;padding:56px 24px 42px;background:rgba(255,255,255,0.28);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:28px;margin-bottom:28px;border:1px solid rgba(255,255,255,0.55);box-shadow:0 8px 40px rgba(176,148,212,0.22),0 1px 0 rgba(255,255,255,0.70) inset;position:relative;overflow:hidden;animation:fadeUp 0.5s ease-out both;}
-    .login-glow{position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse at 50% 0%,rgba(200,160,240,0.20) 0%,transparent 65%);pointer-events:none;}
-    .login-title{font-size:40px;font-weight:900;background:linear-gradient(90deg,#b094d4,#e890c0,#90bcd4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:10px;letter-spacing:-0.8px;line-height:1.15;}
-    .login-sub{color:#9b8ab0!important;font-size:15px;max-width:400px;margin:auto;line-height:1.65;}
-    .wave-bars{display:flex;gap:6px;height:38px;align-items:center;justify-content:center;margin-bottom:16px;}
-    .wb{width:6px;background:linear-gradient(180deg,#c4a0d8,#90bcd4);border-radius:3px;animation:barBounce 1.3s ease-in-out infinite;box-shadow:0 2px 8px rgba(176,148,212,0.30);}
-    .clay-card{background:rgba(255,255,255,0.28)!important;backdrop-filter:blur(18px)!important;-webkit-backdrop-filter:blur(18px)!important;border-radius:24px!important;padding:24px!important;border:1px solid rgba(255,255,255,0.52)!important;box-shadow:0 8px 32px rgba(160,130,200,0.18),0 1px 0 rgba(255,255,255,0.65) inset!important;margin-bottom:16px!important;}
-    .clay-card-inset{background:rgba(255,255,255,0.18)!important;backdrop-filter:blur(12px)!important;border-radius:16px!important;padding:18px 20px!important;border:1px solid rgba(255,255,255,0.40)!important;box-shadow:inset 0 2px 8px rgba(160,130,200,0.14)!important;}
-    .icard{background:rgba(255,255,255,0.28)!important;border:1px solid rgba(255,255,255,0.50)!important;border-radius:22px!important;backdrop-filter:blur(14px)!important;box-shadow:0 6px 24px rgba(160,130,200,0.16)!important;}
-    .icard-title{color:#5a4878!important;font-weight:700!important;}
-    .icard-body{color:#9b8ab0!important;font-size:13px!important;line-height:1.55!important;}
+    .score-pulse{animation:auroraGlow 3s ease-in-out infinite;}
+
+    /* LOGIN */
+    .login-hero{
+        text-align:center;padding:60px 24px 46px;
+        background:rgba(255,255,255,0.38);
+        backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+        border-radius:32px;margin-bottom:28px;
+        border:1.5px solid rgba(255,255,255,0.65);
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.08),
+            0 16px 32px rgba(120,60,20,0.14),
+            0 40px 80px rgba(120,60,20,0.16),
+            0 80px 120px rgba(120,60,20,0.08),
+            0 1px 0 rgba(255,255,255,0.85) inset;
+        position:relative;overflow:hidden;
+        animation:fadeUp 0.5s ease-out both;
+    }
+    .login-glow{position:absolute;top:0;left:0;right:0;bottom:0;
+        background:radial-gradient(ellipse at 50% 0%,
+            rgba(196,155,235,0.22) 0%,transparent 65%);
+        pointer-events:none;}
+    .login-title{font-size:42px;font-weight:900;
+        background:linear-gradient(90deg,#b090d8,#e890c8,#88bcd8);
+        -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+        background-clip:text;margin-bottom:12px;
+        letter-spacing:-1px;line-height:1.1;}
+    .login-sub{color:#6a5a9a!important;font-size:15px;
+        max-width:420px;margin:auto;line-height:1.7;font-weight:400;}
+
+    /* WAVE BARS */
+    .wave-bars{display:flex;gap:6px;height:40px;align-items:center;
+        justify-content:center;margin-bottom:18px;}
+    .wb{width:6px;background:linear-gradient(180deg,#c4a0d8,#90bcd4);
+        border-radius:4px;animation:barBounce 1.4s ease-in-out infinite;
+        box-shadow:0 2px 10px rgba(176,148,212,0.35);}
+
+    /* GLASS CARD */
+    .glass-card, .clay-card {
+        background:rgba(255,255,255,0.35)!important;
+        backdrop-filter:blur(20px)!important;
+        -webkit-backdrop-filter:blur(20px)!important;
+        border-radius:24px!important;padding:24px!important;
+        border:1.5px solid rgba(255,255,255,0.60)!important;
+        box-shadow:
+            0 2px 4px rgba(120,60,20,0.08),
+            0 8px 16px rgba(120,60,20,0.12),
+            0 20px 40px rgba(120,60,20,0.16),
+            0 40px 80px rgba(120,60,20,0.10),
+            0 1px 0 rgba(255,255,255,0.80) inset !important;
+        margin-bottom:16px!important;
+    }
+    .glass-card:hover, .clay-card:hover {
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.10),
+            0 12px 24px rgba(120,60,20,0.16),
+            0 30px 60px rgba(120,60,20,0.20),
+            0 60px 100px rgba(120,60,20,0.12),
+            0 1px 0 rgba(255,255,255,0.85) inset !important;
+        transform: translateY(-4px) !important;
+        transition: all 0.30s ease !important;
+    }
+    .glass-card-inset{
+        background:rgba(255,255,255,0.22)!important;
+        backdrop-filter:blur(14px)!important;
+        border-radius:16px!important;padding:18px 20px!important;
+        border:1px solid rgba(255,255,255,0.45)!important;
+        box-shadow:inset 0 2px 10px rgba(150,120,200,0.16)!important;
+    }
+
+    /* FEATURE CARDS */
+    .icard{
+        background:rgba(255,255,255,0.38)!important;
+        border:1.5px solid rgba(255,255,255,0.62)!important;
+        border-radius:24px!important;
+        backdrop-filter:blur(16px)!important;
+        box-shadow:
+            0 2px 4px rgba(120,60,20,0.08),
+            0 8px 20px rgba(120,60,20,0.14),
+            0 24px 48px rgba(120,60,20,0.12),
+            0 1px 0 rgba(255,255,255,0.78) inset!important;
+        transition:transform 0.28s,box-shadow 0.28s!important;
+    }
+    .icard:hover{
+        transform:translateY(-8px)!important;
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.10),
+            0 16px 32px rgba(120,60,20,0.18),
+            0 40px 80px rgba(120,60,20,0.14),
+            0 1px 0 rgba(255,255,255,0.80) inset!important;
+    }
+    .icard-title{color:#3a1a6a!important;font-weight:700!important;
+        font-size:13.5px!important;}
+    .icard-body{color:#6a5a9a!important;font-size:11.5px!important;
+        line-height:1.65!important;}
+
+    /* RADIO */
     .stRadio>div{gap:10px!important;}
-    .stRadio label{color:#6b5a8a!important;font-weight:500!important;}
-    .stSpinner>div{border-top-color:#b094d4!important;}
-    .sec-label{font-size:11px;font-weight:700;letter-spacing:2.5px;background:linear-gradient(90deg,#b094d4,#90bcd4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-transform:uppercase;margin:24px 0 12px;}
+    .stRadio label {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        color: #2d1a0e !important;
+    }
+    .stRadio [data-testid="stWidgetLabel"] p {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 11px !important;
+        text-transform: uppercase !important;
+        color: #7a5540 !important;
+    }
+    .stRadio > div > label > div:first-child {
+        background-color: rgba(176,148,212,0.30) !important;
+        border: 2px solid rgba(176,148,212,0.60) !important;
+    }
+    .stRadio > div > label[data-checked="true"] > div:first-child {
+        background-color: #b094d4 !important;
+        border-color: #b094d4 !important;
+    }
+
+    /* NEW FONT & COLOR SCHEME */
+    html, body, [class*="css"] {
+        font-family: 'Nunito', sans-serif !important;
+    }
+    h1 {
+        font-family: 'Cormorant Garamond', serif !important;
+        font-weight: 800 !important;
+        font-size: 2.6rem !important;
+        color: #c4703a !important;
+        -webkit-text-fill-color: #c4703a !important;
+        background: none !important;
+        letter-spacing: -0.5px !important;
+    }
+    h2 {
+        font-family: 'Cormorant Garamond', serif !important;
+        font-weight: 700 !important;
+        font-size: 1.8rem !important;
+        color: #b86030 !important;
+        -webkit-text-fill-color: #b86030 !important;
+        background: none !important;
+    }
+    h3 {
+        font-family: 'Nunito', sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 1.2rem !important;
+        color: #c4703a !important;
+        -webkit-text-fill-color: #c4703a !important;
+        background: none !important;
+    }
+
+    /* BODY TEXT — dark peach tones */
+    p, li, span, div, label, caption {
+        color: #7a4030 !important;
+        font-family: 'Nunito', sans-serif !important;
+        font-weight: 500 !important;
+    }
+    [data-testid="stMarkdownContainer"] p {
+        color: #7a4030 !important;
+        font-weight: 500 !important;
+    }
+    [data-testid="stCaptionContainer"] p {
+        color: #c4906a !important;
+        font-size: 12px !important;
+        font-weight: 500 !important;
+    }
+
+    /* SIDEBAR TEXT */
+    [data-testid="stSidebar"] * {
+        color: #7a4030 !important;
+        font-family: 'Nunito', sans-serif !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMetricValue"] {
+        color: #c4703a !important;
+        -webkit-text-fill-color: #c4703a !important;
+        background: none !important;
+        font-size: 1.9rem !important;
+        font-weight: 800 !important;
+        font-family: 'Cormorant Garamond', serif !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMetricLabel"] {
+        color: #c4906a !important;
+        font-size: 11px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.8px !important;
+    }
+
+    /* METRIC VALUES globally */
+    [data-testid="stMetricValue"] {
+        color: #c4703a !important;
+        -webkit-text-fill-color: #c4703a !important;
+        background: none !important;
+        font-size: 2rem !important;
+        font-weight: 800 !important;
+        font-family: 'Cormorant Garamond', serif !important;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #c4906a !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.8px !important;
+        font-family: 'Nunito', sans-serif !important;
+    }
+
+    /* BUTTONS TEXT */
+    .stButton > button {
+        font-family: 'Nunito', sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 14px !important;
+        color: #7a4030 !important;
+        letter-spacing: 0.2px !important;
+    }
+    .stButton > button[kind="primary"] {
+        color: white !important;
+        font-weight: 800 !important;
+    }
+
+    /* ALERT TEXT */
+    div[data-testid="stAlert"] p {
+    color: #2d1a0e !important;
+    font-weight: 600 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 14px !important;
+}
+    }
+
+    /* TAB TEXT */
+    .stTabs [data-baseweb="tab"] {
+        color: #c4906a !important;
+        font-weight: 700 !important;
+        font-family: 'Nunito', sans-serif !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        color: #7a4030 !important;
+        font-weight: 800 !important;
+    }
+
+    /* INPUT TEXT */
+    .stTextInput input {
+        color: #7a4030 !important;
+        font-family: 'Nunito', sans-serif !important;
+        font-weight: 600 !important;
+        font-size: 15px !important;
+    }
+    .stTextInput label {
+        color: #c4906a !important;
+        font-family: 'Nunito', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 11px !important;
+        letter-spacing: 1px !important;
+        text-transform: uppercase !important;
+    }
+
+    /* LOGIN TITLE */
+    .login-title {
+    font-family: 'Playfair Display', serif !important;
+    font-size: 52px !important;
+    font-weight: 900 !important;
+    color: #2d1a0e !important;
+    -webkit-text-fill-color: #2d1a0e !important;
+    background: none !important;
+    letter-spacing: -2px !important;
+    line-height: 1.05 !important;
+    text-shadow: 0 4px 24px rgba(180,100,60,0.22) !important;
+}
+.login-sub {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    color: #5a3520 !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    line-height: 1.75 !important;
+}
+
+    /* SEC LABEL (section headings) */
+    .sec-label {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    letter-spacing: 3.5px !important;
+    color: #2d1a0e !important;
+    -webkit-text-fill-color: #2d1a0e !important;
+    background: none !important;
+    text-transform: uppercase !important;
+    margin: 28px 0 14px !important;
+}
+
+    /* ── GAME INTERFACE ── */
+    @keyframes levelGlow {
+        0%,100% { box-shadow: 0 0 20px rgba(100,120,220,0.60),
+                           0 0 40px rgba(100,120,220,0.30),
+                           0 0 60px rgba(100,120,220,0.15); }
+        50%     { box-shadow: 0 0 30px rgba(140,160,255,0.75),
+                           0 0 60px rgba(140,160,255,0.40),
+                           0 0 90px rgba(140,160,255,0.20); }
+    }
+    @keyframes chestFloat {
+        0%,100% { transform: translateY(0px); }
+        50%     { transform: translateY(-6px); }
+    }
+    @keyframes pathPulse {
+        0%,100% { opacity: 0.4; }
+        50%     { opacity: 1.0; }
+    }
+    @keyframes starSpin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+    }
+    @keyframes unlockPop {
+        0%   { transform: scale(0.8); opacity: 0; }
+        60%  { transform: scale(1.1); opacity: 1; }
+        100% { transform: scale(1.0); opacity: 1; }
+    }
+    .level-node-complete {
+        animation: levelGlow 2.5s ease-in-out infinite !important;
+    }
+    .level-node-available {
+        animation: levelGlow 3s ease-in-out infinite !important;
+    }
+    .chest-locked {
+        animation: chestFloat 3s ease-in-out infinite !important;
+    }
+
+    /* EXPANDER STYLING */
+    .streamlit-expanderHeader {
+        background: rgba(255,255,255,0.35) !important;
+        backdrop-filter: blur(16px) !important;
+        border-radius: 16px !important;
+        border: 1.5px solid rgba(255,255,255,0.62) !important;
+        font-family: 'Nunito', sans-serif !important;
+        font-weight: 700 !important;
+        color: #7a4030 !important;
+        font-size: 14px !important;
+        padding: 14px 20px !important;
+        box-shadow:
+            0 2px 4px rgba(120,60,20,0.08),
+            0 8px 20px rgba(120,60,20,0.14),
+            0 1px 0 rgba(255,255,255,0.78) inset !important;
+    }
+    .streamlit-expanderHeader p,
+.streamlit-expanderHeader span {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 800 !important;
+    font-size: 14px !important;
+    color: #2d1a0e !important;
+}
+    .streamlit-expanderContent {
+        background: rgba(255,255,255,0.28) !important;
+        backdrop-filter: blur(14px) !important;
+        border-radius: 0 0 16px 16px !important;
+        border: 1.5px solid rgba(255,255,255,0.55) !important;
+        border-top: none !important;
+        padding: 16px !important;
+    }
+
+    /* Hide the broken material icon text */
+    [data-testid="collapsedControl"] span {
+        font-size: 0 !important;
+        visibility: hidden !important;
+    }
+
+    /* Replace with a proper arrow using CSS */
+    [data-testid="collapsedControl"]::before {
+        content: '❯' !important;
+        font-size: 16px !important;
+        font-weight: 900 !important;
+        color: #000000 !important;
+        visibility: visible !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+    }
+
+    /* Style the toggle button itself */
+    [data-testid="collapsedControl"] {
+        background: rgba(255,255,255,0.65) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border-radius: 0 14px 14px 0 !important;
+        border: 1.5px solid rgba(255,255,255,0.80) !important;
+        border-left: none !important;
+        box-shadow:
+            4px 0 16px rgba(120,60,20,0.14),
+            8px 0 32px rgba(120,60,20,0.08) !important;
+        min-width: 28px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+    }
+
+    [data-testid="collapsedControl"]:hover {
+        background: rgba(255,255,255,0.90) !important;
+        box-shadow:
+            4px 0 24px rgba(120,60,20,0.20),
+            8px 0 48px rgba(120,60,20,0.12) !important;
+    }
+
+    /* Also hide Deploy button text */
+    [data-testid="stDeployButton"] {
+        display: none !important;
+    }
+
+    /* Hide header decoration but keep toggle */
+    [data-testid="stDecoration"] {
+        display: none !important;
+    }
+
+    /* Make header minimal and transparent */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        border-bottom: none !important;
+        box-shadow: none !important;
+        height: 2.5rem !important;
+    }
+
+    /* Push content down so it clears the header */
+    .block-container {
+        padding-top: 2rem !important;
+        max-width: 1100px !important;
+    }
+
+    /* Style the collapse arrow inside sidebar */
+    [data-testid="stSidebarCollapseButton"] button {
+        background: rgba(255,255,255,0.50) !important;
+        border-radius: 10px !important;
+        border: 1.5px solid rgba(255,255,255,0.70) !important;
+        box-shadow: 0 4px 14px rgba(120,60,20,0.12) !important;
+        width: 32px !important;
+        height: 32px !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button:hover {
+        background: rgba(255,255,255,0.75) !important;
+    }
+    [data-testid="stSidebarCollapseButton"] svg {
+        fill: #2d1a0e !important;
+        color: #2d1a0e !important;
+        width: 16px !important;
+        height: 16px !important;
+    }
+    [data-testid="stSidebarCollapseButton"] span {
+        display: none !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
 
 # Wave bars: all styles via CSS classes — no multi-line attributes so Streamlit renders correctly
-_WAVE_BARS_HTML = '<div class="wave-bars"><div class="wb" style="animation-delay:0.00s;height:14px;"></div><div class="wb" style="animation-delay:0.15s;height:22px;"></div><div class="wb" style="animation-delay:0.30s;height:30px;"></div><div class="wb" style="animation-delay:0.45s;height:38px;"></div><div class="wb" style="animation-delay:0.60s;height:30px;"></div><div class="wb" style="animation-delay:0.75s;height:22px;"></div><div class="wb" style="animation-delay:0.90s;height:14px;"></div></div>'
+_WAVE_BARS_HTML = (
+    '<div class="wave-bars">'
+    '<div class="wb" style="animation-delay:0.00s;height:12px;"></div>'
+    '<div class="wb" style="animation-delay:0.14s;height:20px;"></div>'
+    '<div class="wb" style="animation-delay:0.28s;height:30px;"></div>'
+    '<div class="wb" style="animation-delay:0.42s;height:40px;"></div>'
+    '<div class="wb" style="animation-delay:0.56s;height:32px;"></div>'
+    '<div class="wb" style="animation-delay:0.70s;height:22px;"></div>'
+    '<div class="wb" style="animation-delay:0.84s;height:14px;"></div>'
+    '</div>'
+)
 
 
 def _intro_cards_html() -> str:
@@ -1098,55 +2041,55 @@ def _intro_cards_html() -> str:
 def _score_card(score: float, label: str = "Clarity Score"):
     color = _clarity_color(score)
     tag   = _clarity_label(score)
-    circ  = 389.5
+    circ  = 427.0
     filled = (score / 100) * circ
-
     st.markdown(f"""
-    <div class="score-pulse" style="background:rgba(255,255,255,0.28);border-radius:28px;
-         backdrop-filter:blur(20px);
-         -webkit-backdrop-filter:blur(20px);
-         border:1px solid rgba(255,255,255,0.52);
-         padding:40px 20px 32px;text-align:center;margin:20px 0;
-         box-shadow:0 8px 32px rgba(160,130,200,0.20), 0 1px 0 rgba(255,255,255,0.65) inset;">
-
-      <svg viewBox="0 0 180 180" width="200" height="200"
-           style="display:block;margin:0 auto;">
+    <div class="score-pulse" style="background:rgba(255,120,95,0.48);
+         backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+         border-radius:28px;padding:40px 20px 32px;text-align:center;
+         margin:20px 0;border:1.5px solid rgba(255,160,140,0.72);
+         box-shadow:0 12px 40px rgba(255,120,95,0.28),
+                    0 1px 0 rgba(255,220,210,0.82) inset;">
+      <svg viewBox="0 0 180 180" width="200" height="200" style="display:block;margin:0 auto;">
         <defs>
-          <filter id="cs_shadow">
-            <feDropShadow dx="2" dy="3" stdDeviation="4"
-                          flood-color="rgba(180,160,140,0.35)"/>
+          <filter id="sc_sh">
+            <feDropShadow dx="0" dy="4" stdDeviation="8"
+                          flood-color="rgba(150,120,200,0.30)"/>
           </filter>
+          <linearGradient id="sc_arc" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#c4a0d8"/>
+            <stop offset="50%" stop-color="#f0a0c8"/>
+            <stop offset="100%" stop-color="#80bcd8"/>
+          </linearGradient>
         </defs>
-        <!-- shadow ring -->
-        <circle cx="92" cy="92" r="68" fill="none"
-                stroke="rgba(180,160,140,0.22)" stroke-width="22"/>
-        <!-- track -->
         <circle cx="90" cy="90" r="68" fill="none"
-                stroke="rgba(200,180,230,0.50)" stroke-width="18"/>
-        <!-- score arc -->
+                stroke="rgba(200,180,240,0.25)" stroke-width="20"/>
         <circle cx="90" cy="90" r="68" fill="none"
-                stroke="{color}" stroke-width="18"
+                stroke="rgba(255,255,255,0.50)" stroke-width="16"/>
+        <circle cx="90" cy="90" r="68" fill="none"
+                stroke="url(#sc_arc)" stroke-width="16"
                 stroke-linecap="round"
                 stroke-dasharray="{filled:.1f} {circ:.1f}"
                 transform="rotate(-90 90 90)"/>
-        <!-- inner raised button -->
         <circle cx="90" cy="90" r="52"
-                fill="rgba(255,255,255,0.55)" filter="url(#cs_shadow)"/>
-        <!-- score text -->
+                fill="rgba(255,255,255,0.60)"
+                filter="url(#sc_sh)"/>
         <text x="90" y="83" text-anchor="middle"
-              fill="#5a4878" font-size="30" font-weight="800"
-              font-family="DM Sans, sans-serif">{score}%</text>
+              fill="#2d1a0e" font-size="30" font-weight="900"
+              font-family="'Playfair Display',serif">{score}%</text>
         <text x="90" y="100" text-anchor="middle"
-              fill="#9b8ab0" font-size="11"
-              font-family="DM Sans, sans-serif">Fluency Score</text>
+              fill="#5a3520" font-size="11"
+              font-family="'Plus Jakarta Sans',sans-serif">Fluency Score</text>
       </svg>
-
-      <div style="font-size:13px;color:#9b8ab0;margin-top:8px;
-                  font-weight:500;">{label}</div>
-      <div style="display:inline-block;background:{color}22;color:{color};
-                  padding:5px 18px;border-radius:99px;font-size:12px;
-                  font-weight:700;margin-top:10px;
-                  box-shadow:0 6px 24px rgba(160,130,200,0.18), 0 1px 0 rgba(255,255,255,0.60) inset;">
+      <div style="font-size:13px;color:#5a3520;margin-top:8px;
+                  font-family:'Plus Jakarta Sans',sans-serif;font-weight:500;">{label}</div>
+      <div style="display:inline-block;
+                  background:linear-gradient(135deg,{color}40,{color}20);
+                  color:{color};padding:6px 20px;border-radius:99px;
+                  font-size:12px;font-weight:700;margin-top:12px;
+                  font-family:'Plus Jakarta Sans',sans-serif;
+                  border:1px solid {color}60;
+                  box-shadow:0 4px 16px {color}30;">
         {tag}
       </div>
     </div>
@@ -1159,40 +2102,46 @@ def _event_metrics(result: dict):
     pro = result.get("prolongation_events", 0)
     rep = result.get("repetition_events", 0)
 
-    def _mini_card(value, label, color, icon_svg):
+    def _card(value, label, grad_start, grad_end, icon_path):
         return f"""
-        <div style="background:#f2ede8;border-radius:20px;padding:20px 16px;
+        <div style="background:rgba(255,120,95,0.52);
+                    backdrop-filter:blur(18px);
+                    border-radius:22px;padding:22px 16px;
                     text-align:center;
-                    box-shadow:6px 6px 16px rgba(180,160,140,0.32),
-                               -5px -5px 12px rgba(255,255,255,0.88);">
-          <div style="width:52px;height:52px;border-radius:50%;
-                      background:{color}18;margin:0 auto 12px;
+                    border:1.5px solid rgba(255,160,140,0.72);
+                    box-shadow:0 8px 28px rgba(255,120,95,0.24),
+                               0 1px 0 rgba(255,220,210,0.85) inset;">
+          <div style="width:54px;height:54px;border-radius:50%;
+                      background:linear-gradient(135deg,{grad_start}30,{grad_end}20);
+                      margin:0 auto 14px;
                       display:flex;align-items:center;justify-content:center;
-                      box-shadow:4px 4px 10px rgba(180,160,140,0.28),
-                                 -3px -3px 8px rgba(255,255,255,0.82);">
-            {icon_svg}
+                      border:1.5px solid rgba(255,255,255,0.65);
+                      box-shadow:0 6px 18px {grad_start}30,
+                                 0 1px 0 rgba(255,255,255,0.70) inset;">
+            <svg width="26" height="26" viewBox="0 0 28 28">{icon_path}</svg>
           </div>
-          <div style="font-size:36px;font-weight:900;color:{color};
-                      line-height:1;">{value}</div>
-          <div style="font-size:11px;color:#a89880;margin-top:6px;
+          <div style="font-size:38px;font-weight:900;
+                      font-family:'Playfair Display',serif;
+                      background:linear-gradient(135deg,{grad_start},{grad_end});
+                      -webkit-background-clip:text;
+                      -webkit-text-fill-color:transparent;
+                      background-clip:text;line-height:1;">{value}</div>
+          <div style="font-size:11px;color:#5a3520;margin-top:6px;
+                      font-family:'Plus Jakarta Sans',sans-serif;
                       font-weight:600;letter-spacing:0.5px;
                       text-transform:uppercase;">{label}</div>
         </div>"""
 
-    svg_dur = '<svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="#90bcd4" stroke-width="2"/><polyline points="12,7 12,12 15,15" stroke="#90bcd4" stroke-width="2" stroke-linecap="round"/></svg>'
-    svg_pau = '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="2" fill="#80b4d4"/><rect x="14" y="5" width="4" height="14" rx="2" fill="#80b4d4"/></svg>'
-    svg_pro = '<svg width="22" height="22" viewBox="0 0 24 24"><path d="M2,12 C5,6 8,6 11,12 C14,18 17,18 20,12 C21,9 22,10 24,12" fill="none" stroke="#b094d4" stroke-width="2" stroke-linecap="round"/></svg>'
-    svg_rep = '<svg width="22" height="22" viewBox="0 0 24 24"><rect x="2" y="4" width="10" height="8" rx="3" fill="none" stroke="#f0a080" stroke-width="1.8"/><rect x="12" y="10" width="10" height="8" rx="3" fill="none" stroke="#f0a080" stroke-width="1.8" opacity="0.6"/></svg>'
+    i_dur  = '<circle cx="14" cy="14" r="11" fill="none" stroke="#80bcd8" stroke-width="2.2"/><polyline points="14,8 14,14 18,17" stroke="#80bcd8" stroke-width="2.2" stroke-linecap="round"/>'
+    i_pau  = '<rect x="5" y="6" width="7" height="16" rx="3.5" fill="#a090d8"/><rect x="16" y="6" width="7" height="16" rx="3.5" fill="#a090d8"/>'
+    i_pro  = '<path d="M2,14 C5,7 8,7 11,14 C14,21 17,21 20,14 C22,10 24,12 26,14" fill="none" stroke="#c4a0d0" stroke-width="2.5" stroke-linecap="round"/>'
+    i_rep  = '<rect x="1" y="3" width="13" height="10" rx="4" fill="none" stroke="#f0a0b8" stroke-width="2"/><rect x="14" y="13" width="13" height="10" rx="4" fill="none" stroke="#f0a0b8" stroke-width="2" opacity="0.6"/>'
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(_mini_card(f"{dur:.1f}s", "Duration", "#90bcd4", svg_dur), unsafe_allow_html=True)
-    with c2:
-        st.markdown(_mini_card(pau, "Pause / Block", "#80b4d4", svg_pau), unsafe_allow_html=True)
-    with c3:
-        st.markdown(_mini_card(pro, "Prolonged", "#b094d4", svg_pro), unsafe_allow_html=True)
-    with c4:
-        st.markdown(_mini_card(rep, "Repeated", "#f0a080", svg_rep), unsafe_allow_html=True)
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.markdown(_card(f"{dur:.1f}s","Duration","#80bcd8","#a0d0e8",i_dur),unsafe_allow_html=True)
+    with c2: st.markdown(_card(pau,"Pause / Block","#a090d8","#c0a8e8",i_pau),unsafe_allow_html=True)
+    with c3: st.markdown(_card(pro,"Prolonged","#c4a0d0","#d8b8e0",i_pro),unsafe_allow_html=True)
+    with c4: st.markdown(_card(rep,"Repeated","#f0a0b8","#f8c0d0",i_rep),unsafe_allow_html=True)
 
 
 def _fluency_report_card(result: dict, clarity: float,
@@ -1565,7 +2514,8 @@ def page_home():
                 st.markdown(f"*{transcript}*")
 
             # Side-by-side audio comparison using user's own voice
-            _audio_comparison(signal, sr, result, transcript, words, clarity, None)
+            with st.expander("View Detailed Breakdown", expanded=False):
+                _audio_comparison(signal, sr, result, transcript, words, clarity, None)
 
             st.divider()
             st.success("Baseline saved. Head to **Exercises** to start improving.")
@@ -1574,54 +2524,152 @@ def page_home():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def _game_level_card(ex, state, target, completed, unlocked, best):
+    ex_id = ex["id"]
+    diff_colors = {
+        "Beginner": ("#80c8a8", "#4a9a6a"),
+        "Intermediate": ("#90bcd8", "#4a7aaa"),
+        "Advanced": ("#c4a0d8", "#8a60a8"),
+    }
+    diff_color, diff_dark = diff_colors.get(ex["difficulty"], ("#b0a0c8", "#806090"))
+
+    if completed:
+        stars = "★★★" if best >= 80 else ("★★☆" if best >= 70 else "★☆☆")
+        st.markdown(
+            f'''<div class="level-node-complete" style="background:linear-gradient(135deg,rgba(120,160,255,0.68),rgba(100,140,235,0.78));border-radius:24px;padding:24px 18px;text-align:center;position:relative;border:2px solid rgba(180,200,255,0.68);box-shadow:0 0 28px rgba(120,160,255,0.58),0 0 56px rgba(120,160,255,0.32),0 8px 40px rgba(100,140,235,0.42);min-height:220px;cursor:pointer;transition:transform 0.2s;">'''
+            f'''<div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#a0c0ff,#c0d8ff);margin:0 auto 14px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(120,160,255,0.72),0 0 56px rgba(120,160,255,0.36);">'''
+            f'''<svg width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="none" stroke="rgba(255,255,255,0.30)" stroke-width="2"/><polyline points="9,16 14,21 23,11" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>'''
+            f'''</div>'''
+            f'''<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:rgba(240,245,255,0.80);text-transform:uppercase;margin-bottom:4px;font-family:'Plus Jakarta Sans',sans-serif;">Level {ex_id + 1}</div>'''
+            f'''<div style="font-size:13px;font-weight:700;color:rgba(240,245,255,0.98);margin-bottom:8px;line-height:1.3;font-family:'Plus Jakarta Sans',sans-serif;">{ex["title"].split(":")[-1].strip()}</div>'''
+            f'''<div style="font-size:20px;color:rgba(200,215,255,0.90);letter-spacing:2px;margin-bottom:8px;font-family:'Playfair Display',serif;">{stars}</div>'''
+            f'''<div style="display:inline-block;background:rgba(196,112,58,0.25);color:#f0a060;padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700;border:1px solid rgba(196,112,58,0.45);">Best: {best}%</div>'''
+            f'''<div style="position:absolute;top:12px;right:12px;background:linear-gradient(135deg,#c4703a,#e8a060);color:white;padding:2px 10px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:1px;">DONE</div>'''
+            f'''</div>''',
+            unsafe_allow_html=True
+        )
+        if st.button("Play Again", key=f"game_{ex_id}", use_container_width=True):
+            st.session_state.ex_open = ex_id
+            st.rerun()
+
+    elif unlocked:
+        st.markdown(
+            f'''<div class="level-node-available" style="background:linear-gradient(135deg,rgba(140,180,255,0.62),rgba(120,160,235,0.72));border-radius:24px;padding:24px 18px;text-align:center;position:relative;border:2px solid rgba(180,200,255,0.62);box-shadow:0 0 28px rgba(140,180,255,0.52),0 0 56px rgba(140,180,255,0.28),0 8px 40px rgba(120,160,235,0.38);min-height:220px;cursor:pointer;">'''
+            f'''<div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#a0c0ff,#c0d8ff);margin:0 auto 14px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(120,160,255,0.72),0 0 56px rgba(120,160,255,0.36);">'''
+            f'''<svg width="30" height="30" viewBox="0 0 30 30"><polygon points="12,8 22,15 12,22" fill="white" opacity="0.90"/></svg>'''
+            f'''</div>'''
+            f'''<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:rgba(200,215,255,0.90);text-transform:uppercase;margin-bottom:4px;font-family:'Plus Jakarta Sans',sans-serif;">Level {ex_id + 1}</div>'''
+            f'''<div style="font-size:13px;font-weight:700;color:rgba(240,245,255,0.98);margin-bottom:8px;line-height:1.3;font-family:'Plus Jakarta Sans',sans-serif;">{ex["title"].split(":")[-1].strip()}</div>'''
+            f'''<div style="display:inline-block;background:rgba(255,180,190,0.20);color:{diff_color};padding:3px 10px;border-radius:99px;font-size:10px;font-weight:600;border:1px solid {diff_color}50;margin-bottom:8px;font-family:'Plus Jakarta Sans',sans-serif;">{ex["difficulty"]}</div>'''
+            f'''<div style="font-size:12px;color:rgba(180,200,255,0.80);margin-bottom:4px;font-family:'Plus Jakarta Sans',sans-serif;">Target: {target}%</div>'''
+            f'''<div style="position:absolute;top:12px;right:12px;background:rgba(255,180,190,0.30);color:rgba(255,200,210,0.90);padding:2px 10px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:1px;border:1px solid rgba(255,180,190,0.50);">READY</div>'''
+            f'''</div>''',
+            unsafe_allow_html=True
+        )
+        if st.button("Start Level", key=f"game_{ex_id}", type="primary", use_container_width=True):
+            st.session_state.ex_open = ex_id
+            st.rerun()
+
+    else:
+        st.markdown(
+            f'''<div class="chest-locked" style="background:linear-gradient(135deg,rgba(120,160,255,0.35),rgba(100,140,235,0.42));border-radius:24px;padding:24px 18px;text-align:center;position:relative;border:2px solid rgba(160,200,255,0.38);box-shadow:0 4px 20px rgba(120,160,255,0.22);min-height:220px;opacity:0.65;">'''
+            f'''<div style="margin:0 auto 14px;width:72px;height:72px;">'''
+            f'''<svg viewBox="0 0 72 72" width="72" height="72"><defs><linearGradient id="chest_{ex_id}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#c06080"/><stop offset="100%" stop-color="#803050"/></linearGradient></defs>'''
+            f'''<rect x="8" y="32" width="56" height="32" rx="6" fill="url(#chest_{ex_id})" stroke="rgba(200,120,130,0.35)" stroke-width="1.5"/>'''
+            f'''<rect x="8" y="18" width="56" height="18" rx="6" fill="url(#chest_{ex_id})" stroke="rgba(200,120,130,0.35)" stroke-width="1.5"/>'''
+            f'''<rect x="8" y="32" width="56" height="5" fill="rgba(180,100,120,0.50)"/>'''
+            f'''<rect x="28" y="36" width="16" height="14" rx="3" fill="rgba(200,160,80,0.80)" stroke="rgba(220,180,100,0.50)" stroke-width="3" stroke-linecap="round"/>'''
+            f'''<path d="M30,36 L30,31 Q36,26 42,31 L42,36" fill="none" stroke="rgba(200,160,80,0.80)" stroke-width="3" stroke-linecap="round"/>'''
+            f'''<circle cx="36" cy="41" r="2.5" fill="rgba(50,30,70,0.80)"/>'''
+            f'''<rect x="34.5" y="42" width="3" height="4" rx="1" fill="rgba(50,30,70,0.80)"/>'''
+            f'''<circle cx="20" cy="52" r="3" fill="rgba(200,120,130,0.35)"/>'''
+            f'''<circle cx="52" cy="52" r="3" fill="rgba(200,120,130,0.35)"/>'''
+            f'''</svg></div>'''
+            f'''<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:rgba(180,200,255,0.80);text-transform:uppercase;margin-bottom:4px;font-family:'Plus Jakarta Sans',sans-serif;">Level {ex_id + 1}</div>'''
+            f'''<div style="font-size:13px;font-weight:700;color:rgba(240,245,255,0.98);margin-bottom:8px;line-height:1.3;font-family:'Plus Jakarta Sans',sans-serif;">{ex["title"].split(":")[-1].strip()}</div>'''
+            f'''<div style="font-size:11px;color:rgba(180,200,255,0.80);font-family:'Plus Jakarta Sans',sans-serif;">Complete previous level to unlock</div>'''
+            f'''<div style="position:absolute;top:12px;right:12px;background:rgba(100,120,200,0.40);color:rgba(240,245,255,0.98);padding:2px 10px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:1px;">LOCKED</div>'''
+            f'''</div>''',
+            unsafe_allow_html=True
+        )
+        st.button("Locked", key=f"game_{ex_id}", disabled=True, use_container_width=True)
+
+
 # PAGE: EXERCISES LIST
 # ─────────────────────────────────────────────────────────────────────────────
 
 def page_exercises():
-    # If an exercise detail is open, show it instead
     if st.session_state.ex_open is not None:
         page_exercise_detail(st.session_state.ex_open)
         return
 
-    st.title("Speech Exercises")
-
+    # ── Game header ──
     bl = st.session_state.baseline
-    if bl:
-        st.info(
-            f"Your baseline: **{bl['clarity']}%** &nbsp;|&nbsp; "
-            f"Target for next exercise: **{_ex_target(st.session_state.ex_open or 0)}%**"
-        )
-    else:
-        st.warning("Record your baseline on **Home** first for the best experience.")
+    completed_count = sum(
+        1 for s in st.session_state.ex_states.values() 
+        if s["completed"]
+    )
+    total_xp = completed_count * 100
+    level = completed_count + 1
+    pct = (completed_count / len(EXERCISES)) * 100
 
     st.markdown(
-        "Each exercise has its own target score — targets increase gradually as you progress."
+        f'<div style="background:linear-gradient(135deg,rgba(160,50,80,0.60),rgba(120,30,60,0.70));backdrop-filter:blur(24px);border-radius:28px;padding:28px 36px;margin-bottom:24px;border:1.5px solid rgba(255,160,170,0.40);box-shadow:0 0 40px rgba(200,80,100,0.30),0 0 80px rgba(200,80,100,0.12);position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:-40px;right:-40px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(196,112,58,0.30) 0%,transparent 70%);pointer-events:none;"></div>'
+        f'<div style="position:absolute;bottom:-30px;left:-30px;width:140px;height:140px;border-radius:50%;background:radial-gradient(circle,rgba(176,148,212,0.25) 0%,transparent 70%);pointer-events:none;"></div>'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">'
+        f'<div>'
+        f'<div style="font-size:11px;font-weight:700;letter-spacing:3px;color:rgba(90,53,32,0.80);text-transform:uppercase;margin-bottom:6px;">Speech Quest</div>'
+        f'<div style="font-size:30px;font-weight:900;background:linear-gradient(90deg,#f0c080,#c4703a,#f0a060);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">Fluency Champion</div>'
+        f'<div style="font-size:13px;color:rgba(45,26,14,0.70);margin-top:6px;">Master all {len(EXERCISES)} exercises to achieve full fluency</div>'
+        f'</div>'
+        f'<div style="display:inline-flex;align-items:center;gap:12px;">'
+        f'<div style="background:linear-gradient(135deg,#c4703a,#e8a060);border-radius:16px;padding:12px 20px;box-shadow:0 0 24px rgba(196,112,58,0.50);text-align:center;">'
+        f'<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,0.80);text-transform:uppercase;">Level</div>'
+        f'<div style="font-size:32px;font-weight:900;color:white;line-height:1;">{level}</div>'
+        f'</div>'
+        f'<div style="background:rgba(255,255,255,0.12);border-radius:16px;padding:12px 20px;border:1px solid rgba(176,148,212,0.40);text-align:center;">'
+        f'<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:rgba(90,53,32,0.80);text-transform:uppercase;">XP</div>'
+        f'<div style="font-size:32px;font-weight:900;background:linear-gradient(90deg,#c4a0f8,#80d0ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;">{total_xp}</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+        f'<div style="margin-top:20px;">'
+        f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+        f'<span style="font-size:11px;color:rgba(45,26,14,0.70);font-weight:600;">Progress to next level</span>'
+        f'<span style="font-size:11px;color:rgba(45,26,14,0.70);font-weight:600;">{completed_count}/{len(EXERCISES)}</span>'
+        f'</div>'
+        f'<div style="background:rgba(255,255,255,0.10);border-radius:99px;height:10px;border:1px solid rgba(176,148,212,0.25);overflow:hidden;">'
+        f'<div style="width:{pct:.0f}%;height:100%;border-radius:99px;background:linear-gradient(90deg,#b094d4,#c4703a,#f0a060);box-shadow:0 0 10px rgba(196,112,58,0.60);min-width:8px;"></div>'
+        f'</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
     )
-    st.divider()
 
-    for ex in EXERCISES:
-        state     = st.session_state.ex_states[ex["id"]]
-        target    = _ex_target(ex["id"])
-        
-        # Render the exercise card
-        _exercise_card(ex, state, target)
-        
-        # Action button below the card
-        unlocked  = state["unlocked"]
-        completed = state["completed"]
-        
-        if unlocked or completed:
-            btn_label = "Review" if completed else "Start"
-            if st.button(btn_label, key=f"open_{ex['id']}", use_container_width=True):
-                st.session_state.ex_open = ex["id"]
-                st.rerun()
-        else:
-            st.button(
-                "Locked", key=f"open_{ex['id']}",
-                disabled=True, use_container_width=True,
-            )
+    # ── Baseline warning ──
+    if not bl:
+        st.warning("Record your baseline on Home first to begin your quest.")
 
-        st.divider()
+    st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+
+    # ── Level nodes grid ──
+    # Group exercises into rows of 3
+    rows = [EXERCISES[i:i+3] for i in range(0, len(EXERCISES), 3)]
+
+    for row_idx, row in enumerate(rows):
+        cols = st.columns(3)
+        for col_idx, ex in enumerate(row):
+            state     = st.session_state.ex_states[ex["id"]]
+            completed = state["completed"]
+            unlocked  = state["unlocked"]
+            best      = state["best_score"]
+            target    = _ex_target(ex["id"])
+
+            with cols[col_idx]:
+                _game_level_card(ex, state, target, completed, unlocked, best)
+
+        st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1661,6 +2709,20 @@ def page_exercise_detail(ex_id: int):
     _read_aloud_box(ex["text"])
 
     st.divider()
+
+    # ── Pre-exercise breathing prompt ─────────────────────────────────────
+    if not st.session_state.get(f"ready_{ex_id}", False):
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(20px);border-radius:24px;padding:36px 32px;text-align:center;margin:20px 0;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 10px 36px rgba(150,120,200,0.22);">'
+            f'<div style="font-size:32px;font-weight:800;color:#c4703a;margin-bottom:12px;">Before you begin</div>'
+            f'<div style="font-size:16px;color:#7a4030;line-height:1.8;max-width:440px;margin:0 auto 24px;">Take a slow deep breath. Relax your shoulders. There is no rush and no pressure. Speak at your own natural pace.</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        if st.button("I am Ready", type="primary", use_container_width=True, key=f"ready_btn_{ex_id}"):
+            st.session_state[f"ready_{ex_id}"] = True
+            st.rerun()
+        return
 
     # ── Recording ─────────────────────────────────────────────────────────
     st.subheader("Record Your Attempt")
@@ -1715,9 +2777,17 @@ def page_exercise_detail(ex_id: int):
             # ── Pass / Fail ───────────────────────────────────────────────
             if clarity >= _ex_target(ex_id):
                 st.balloons()
+                st.markdown(
+                    f'<div style="background:linear-gradient(135deg,rgba(30,15,50,0.90),rgba(15,30,60,0.90));border-radius:24px;padding:28px;text-align:center;border:2px solid rgba(196,112,58,0.70);box-shadow:0 0 40px rgba(196,112,58,0.35),0 0 80px rgba(196,112,58,0.15);margin:16px 0;animation:unlockPop 0.5s ease-out;">'
+                    f'<div style="font-size:36px;font-weight:900;background:linear-gradient(90deg,#f0c080,#c4703a,#f0a060);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;">Level Complete!</div>'
+                    f'<div style="font-size:16px;color:rgba(220,200,255,0.85);margin-bottom:16px;">Clear and Confident — you scored {clarity}%</div>'
+                    f'<div style="display:inline-block;background:linear-gradient(135deg,#c4703a,#f0a060);color:white;padding:8px 24px;border-radius:99px;font-size:14px;font-weight:800;box-shadow:0 0 20px rgba(196,112,58,0.50);">+ 100 XP Earned</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
                 st.success(
-                    f"**Exercise Complete!** "
-                    f"You scored **{clarity}%** (target: {_ex_target(ex_id)}%)"
+                    f"Clear and Confident! You scored {clarity}% "
+                    f"— well above the {_ex_target(ex_id)}% target."
                 )
                 next_id = ex_id + 1
                 if not state["completed"]:
@@ -1745,8 +2815,9 @@ def page_exercise_detail(ex_id: int):
             else:
                 needed = _ex_target(ex_id) - clarity
                 st.warning(
-                    f"Score: **{clarity}%** — You need **{needed:.1f}% more** "
-                    f"to reach the target of **{_ex_target(ex_id)}%**. Keep practising!"
+                    f"Great effort! You need {needed:.1f}% more "
+                    f"to complete this exercise. Every attempt "
+                    f"builds your fluency — keep going!"
                 )
                 _show_tips(ex["tip_type"], "Tips to Improve Your Score")
 
@@ -1756,10 +2827,11 @@ def page_exercise_detail(ex_id: int):
             )
 
             # Side-by-side audio comparison using user's own voice
-            _audio_comparison(
-                signal, sr, result, tx, words, clarity,
-                st.session_state.baseline["clarity"] if st.session_state.baseline else None
-            )
+            with st.expander("View Detailed Breakdown", expanded=False):
+                _audio_comparison(
+                    signal, sr, result, tx, words, clarity,
+                    st.session_state.baseline["clarity"] if st.session_state.baseline else None
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1851,33 +2923,33 @@ def page_progress():
     ex_labels  = [f"Ex {ex['id']}\n{ex['title'].split(':')[-1].strip()[:12]}" for ex in EXERCISES]
     ex_scores  = [st.session_state.ex_states[ex["id"]]["best_score"] or 0 for ex in EXERCISES]
     ex_done    = [st.session_state.ex_states[ex["id"]]["completed"] for ex in EXERCISES]
-    bar_colors = ["#b094d4" if d else ("#90bcd4" if s > 0 else "rgba(200,190,220,0.3)")
+    bar_colors = ["#4a8a4a" if d else ("#6aa86a" if s > 0 else "#a8d8a8")
                   for s, d in zip(ex_scores, ex_done)]
 
-    fig, ax = plt.subplots(figsize=(8, 3.4), facecolor="#f5f0fa")
-    ax.set_facecolor("#f0eaf8")
+    fig, ax = plt.subplots(figsize=(8, 3.4), facecolor="#f0f8f0")
+    ax.set_facecolor("#e8f4e8")
     bars = ax.bar(ex_labels, ex_scores, color=bar_colors, edgecolor="none",
                   width=0.55, zorder=2)
     target_values = [_ex_target(ex["id"]) for ex in EXERCISES]
-    ax.plot(ex_labels, target_values, color="#e8a0bf", linewidth=1.4,
+    ax.plot(ex_labels, target_values, color="#ff6b35", linewidth=1.4,
             linestyle="--", alpha=0.75, label="Target per exercise", zorder=3)
     if bl.get("clarity"):
-        ax.axhline(bl["clarity"], color="#90bcd4", linewidth=1.1, linestyle=":",
+        ax.axhline(bl["clarity"], color="#4a90e2", linewidth=1.1, linestyle=":",
                    alpha=0.70, label=f"Baseline {bl['clarity']}%", zorder=3)
     for bar, score in zip(bars, ex_scores):
         if score > 0:
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1.5,
                     f"{score:.0f}%", ha="center", va="bottom",
-                    color="#5a4878", fontsize=8.5, fontweight="600")
+                    color="#2d1a0e", fontsize=8.5, fontweight="600")
     ax.set_ylim(0, 110)
-    ax.set_ylabel("Score (%)", color="#9b8ab0", fontsize=9)
-    ax.tick_params(colors="#9b8ab0", labelsize=8)
-    ax.set_title("Exercise Best Scores", color="#5a4878", fontsize=11, fontweight="bold", pad=8)
+    ax.set_ylabel("Score (%)", color="#2d1a0e", fontsize=9)
+    ax.tick_params(colors="#2d1a0e", labelsize=8)
+    ax.set_title("Exercise Best Scores", color="#2d1a0e", fontsize=11, fontweight="bold", pad=8)
     for sp in ax.spines.values():
-        sp.set_edgecolor("rgba(176,148,212,0.15)")
-    ax.grid(axis="y", color="rgba(176,148,212,0.15)", linewidth=0.6, linestyle="--", alpha=0.7, zorder=1)
-    legend = ax.legend(facecolor="#f5f0fa", edgecolor="rgba(176,148,212,0.15)",
-                       labelcolor="#9b8ab0", fontsize=8.5)
+        sp.set_edgecolor("#e8f4e8")
+    ax.grid(axis="y", color="#e8f4e8", linewidth=0.6, linestyle="--", alpha=0.7, zorder=1)
+    legend = ax.legend(facecolor="#f0f8f0", edgecolor="#e8f4e8",
+                       labelcolor="#2d1a0e", fontsize=8.5)
     plt.tight_layout(pad=1.2)
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
@@ -1901,21 +2973,36 @@ def _severity(count: int) -> str:
 
 
 def _home_header():
-    st.markdown(
-        '<div class="clay-card" style="text-align:center;padding:40px 20px;'
-        'background:rgba(255,255,255,0.28);'
-        'backdrop-filter:blur(20px);'
-        '-webkit-backdrop-filter:blur(20px);'
-        'border:1px solid rgba(255,255,255,0.52);">'
-        '<div style="font-size:56px;font-weight:900;color:#5a4878;letter-spacing:-1.5px;margin-bottom:12px;">'
-        'Stutter <span style="background:linear-gradient(90deg,#b094d4,#f0a080);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Clarity</span> Coach'
-        '</div>'
-        '<div style="font-size:18px;color:#9b8ab0;line-height:1.6;max-width:600px;margin:0 auto;">'
-        'Your personal speech fluency companion — record, analyse, and improve with AI-powered guidance.'
-        '</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,
+    rgba(255,120,95,0.65),
+    rgba(255,140,120,0.75));
+                backdrop-filter:blur(24px);border-radius:28px;
+                padding:36px 40px;margin-bottom:24px;
+                border:1.5px solid rgba(255,160,140,0.75);
+                box-shadow:0 12px 44px rgba(255,120,95,0.32),
+                           0 1px 0 rgba(255,220,210,0.88) inset;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:3px;
+                  font-family:'Plus Jakarta Sans',sans-serif;
+                  color:#5a3520;text-transform:uppercase;margin-bottom:10px;">
+        Speech Therapy Platform
+      </div>
+      <div style="font-size:32px;font-weight:900;
+                  font-family:'Playfair Display',serif;
+                  background:linear-gradient(90deg,#9060c0,#d060b0,#6098d0);
+                  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+                  background-clip:text;letter-spacing:-0.5px;line-height:1.2;
+                  margin-bottom:10px;">
+        Stutter Clarity Coach
+      </div>
+      <div style="font-size:15px;color:#3a2010;line-height:1.65;
+                  font-family:'Plus Jakarta Sans',sans-serif;
+                  max-width:560px;font-weight:500;">
+        Record your voice, analyse your speech fluency, and improve 
+        step by step with AI-powered guidance.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def _exercise_card(ex: dict, state: dict, target: int):
@@ -1949,17 +3036,17 @@ def _exercise_card(ex: dict, state: dict, target: int):
         f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">'
         f'<div style="flex:1;">'
         f'<div style="font-size:18px;font-weight:700;color:#5a4878;margin-bottom:4px;">{ex["title"]}</div>'
-        f'<div style="font-size:13px;color:#9b8ab0;margin-bottom:8px;">{ex["difficulty"]} • {ex["focus"]}</div>'
+        f'<div style="font-size:13px;color:#7a5540;margin-bottom:8px;">{ex["difficulty"]} • {ex["focus"]}</div>'
         f'<div style="display:inline-block;background:{status_bg};color:{status_color};padding:3px 10px;border-radius:99px;font-size:10px;font-weight:700;">{status_text}</div>'
         f'{score_badge}'
         f'</div>'
         f'<div style="margin-left:16px;">'
         f'<div style="font-size:24px;font-weight:800;color:#b094d4;">{target}%</div>'
-        f'<div style="font-size:10px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.5px;">Target</div>'
+        f'<div style="font-size:10px;color:#7a5540;text-transform:uppercase;letter-spacing:0.5px;">Target</div>'
         f'</div>'
         f'</div>'
-        f'<div style="font-size:12px;color:#9b8ab0;margin-top:8px;">{ex["instruction"]}</div>'
-        f'{f"<div style=\"font-size:11px;color:#9b8ab0;margin-top:6px;\">Attempts: {attempts}</div>" if attempts > 0 else ""}'
+        f'<div style="font-size:12px;color:#7a5540;margin-top:8px;">{ex["instruction"]}</div>'
+        f'{f"<div style=\"font-size:11px;color:#7a5540;margin-top:6px;\">Attempts: {attempts}</div>" if attempts > 0 else ""}'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -1977,23 +3064,23 @@ def _event_metrics(result: dict):
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;">'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#b094d4;margin-bottom:4px;">{dur:.1f}s</div>'
-        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Duration</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Duration</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#90bcd4;margin-bottom:4px;">{pau}</div>'
-        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Pauses ({_severity(pau)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Pauses ({_severity(pau)})</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#f0a080;margin-bottom:4px;">{pro}</div>'
-        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Prolongations ({_severity(pro)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Prolongations ({_severity(pro)})</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#d490a0;margin-bottom:4px;">{rep}</div>'
-        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Repetitions ({_severity(rep)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Repetitions ({_severity(rep)})</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#e86090;margin-bottom:4px;">{blk}</div>'
-        f'<div style="font-size:11px;color:#9b8ab0;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Blocks ({_severity(blk)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Blocks ({_severity(blk)})</div>'
         f'</div>'
         '</div></div>',
         unsafe_allow_html=True,
@@ -2001,56 +3088,135 @@ def _event_metrics(result: dict):
 
 
 def _read_aloud_box(text: str):
-    st.markdown(
-        f'<div class="clay-card-inset" style="padding:24px;margin:16px 0;">'
-        f'<div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#b094d4;text-transform:uppercase;margin-bottom:8px;">Read This Aloud</div>'
-        f'<div style="font-size:20px;line-height:1.8;color:#5a4878;font-weight:500;text-align:center;padding:20px;background:rgba(176,148,212,0.08);border-radius:12px;border:1px solid rgba(176,148,212,0.20);">{text}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"""
+    <div style="background:rgba(255,255,255,0.38);
+                backdrop-filter:blur(18px);border-radius:20px;
+                padding:26px 30px;font-size:19px;line-height:1.9;
+                color:#2d1a0e;margin:12px 0 20px;
+                border:1.5px solid rgba(255,255,255,0.62);
+                border-left:4px solid rgba(176,148,212,0.70);
+                box-shadow:0 8px 28px rgba(150,120,200,0.18),
+                           0 1px 0 rgba(255,255,255,0.70) inset;
+                font-weight:500;">
+      {text}
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def _render_sidebar():
-    st.markdown(
-        '<div class="clay-card" style="text-align:center;padding:20px;margin-bottom:16px;">'
-        '<div style="font-size:28px;color:#b094d4;margin-bottom:8px;">🌊</div>'
-        '<div style="font-size:17px;font-weight:700;background:linear-gradient(90deg,#90bcd4,#b094d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Clarity Coach</div>'
-        f'<div style="font-size:12px;color:#9b8ab0;margin-top:4px;">{st.session_state.get("username", "")}</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    uname = st.session_state.get("username", "")
+    st.markdown(f"""
+    <div style="text-align:center;padding:24px 16px 16px;">
+      <div style="display:inline-flex;align-items:center;
+                  justify-content:center;width:58px;height:58px;
+                  border-radius:50%;
+                  background:rgba(255,255,255,0.45);
+                  margin:0 auto 12px;
+                  border:1.5px solid rgba(255,255,255,0.70);
+                  box-shadow:0 6px 22px rgba(150,120,200,0.25),
+                             0 1px 0 rgba(255,255,255,0.75) inset;">
+        <svg width="28" height="28" viewBox="0 0 28 28">
+          <path d="M2,14 C5,8 8,8 11,14 C14,20 17,20 20,14 C22,10 24,12 26,14"
+                fill="none" stroke="url(#sb_grad)" stroke-width="2.8"
+                stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="sb_grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#c4a0d8"/>
+              <stop offset="100%" stop-color="#80bcd8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <div style="font-size:17px;font-weight:800;
+                  font-family:'Playfair Display',serif;
+                  background:linear-gradient(90deg,#b090d8,#80bcd8);
+                  -webkit-background-clip:text;
+                  -webkit-text-fill-color:transparent;
+                  background-clip:text;letter-spacing:-0.3px;">
+        Clarity Coach
+      </div>
+      <div style="font-size:12px;color:#5a3520;margin-top:4px;
+                  font-family:'Plus Jakarta Sans',sans-serif;
+                  font-weight:500;">{uname}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.divider()
 
     nav = st.radio(
         "Navigation",
         options=_NAV_OPTIONS,
         index=_PAGE_IDX.get(st.session_state.page, 0),
     )
-
     desired = _NAV_PAGE_MAP[nav]
     if desired != st.session_state.page:
         _nav_to(desired)
 
     st.divider()
 
-    # Quick stats
-    if st.session_state.baseline:
-        st.metric("Baseline", f"{st.session_state.baseline['clarity']}%")
+    # Sidebar toggle button
+    if st.button("🗂", key="sidebar_toggle", help="Toggle Sidebar"):
+        sidebar_state = st.session_state.get("sidebar_visible", True)
+        st.session_state.sidebar_visible = not sidebar_state
+        st.rerun()
 
-    completed_count = sum(
-        1 for s in st.session_state.ex_states.values() if s["completed"]
-    )
-    st.metric("Completed", f"{completed_count} / {len(EXERCISES)}")
-    st.caption(f"Target per exercise: **{_ex_target(st.session_state.get('ex_open', 0))}%**")
+    # Only show sidebar content if visible
+    if st.session_state.get("sidebar_visible", True):
+        if st.session_state.baseline:
+            st.metric("Baseline", f"{st.session_state.baseline['clarity']}%")
+
+        completed_count = sum(
+            1 for s in st.session_state.ex_states.values() if s["completed"]
+        )
+        st.metric("Completed", f"{completed_count} / {len(EXERCISES)}")
+
+        streak = _get_streak()
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.30);
+                    backdrop-filter:blur(16px);border-radius:18px;
+                    padding:14px 16px;margin:8px 0;
+                    border:1.5px solid rgba(255,200,150,0.45);
+                    box-shadow:0 4px 18px rgba(220,150,100,0.20);">
+          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;
+                      color:#7a5540;text-transform:uppercase;margin-bottom:4px;
+                      font-family:'Plus Jakarta Sans',sans-serif;">
+            Practice Streak
+          </div>
+          <div style="font-size:26px;font-weight:900;color:#c4703a;
+                      font-family:'Playfair Display',serif;">
+            {streak} day{"s" if streak != 1 else ""}
+      </div>
+      <div style="font-size:11px;color:#7a5540;margin-top:3px;
+                  font-family:'Plus Jakarta Sans',sans-serif;">
+        {"Keep it going!" if streak >= 3 else "Practice daily to build your streak"}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    pct = completed_count / len(EXERCISES)
+    st.markdown(f"""
+    <div style="background:rgba(255,255,255,0.30);border-radius:99px;
+                height:8px;margin:8px 0 4px;
+                border:1px solid rgba(255,255,255,0.50);
+                box-shadow:inset 0 2px 6px rgba(150,120,200,0.18);">
+      <div style="width:{pct*100:.0f}%;height:100%;border-radius:99px;
+                  background:linear-gradient(90deg,#c4a0d8,#80bcd8);
+                  min-width:8px;"></div>
+    </div>
+    <div style="font-size:11px;color:#5a3520;text-align:center;
+                font-family:'Plus Jakarta Sans',sans-serif;
+                margin-bottom:8px;">{completed_count} of {len(EXERCISES)} complete</div>
+    """, unsafe_allow_html=True)
 
     st.divider()
 
     if st.button("Reset All Progress", use_container_width=True):
-        uid = st.session_state.get("user_id")
-        uname = st.session_state.get("username")
+        uid   = st.session_state.get("user_id")
+        uname2 = st.session_state.get("username")
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         st.session_state.user_id  = uid
-        st.session_state.username = uname
+        st.session_state.username = uname2
         if uid:
             with _db() as conn:
                 conn.execute("DELETE FROM progress WHERE user_id = ?", (uid,))
@@ -2112,32 +3278,137 @@ def page_login():
 def main():
     st.set_page_config(
         page_title="Stutter Clarity Coach",
-        page_icon=None,
+        page_icon="🎙️",
         layout="wide",
+        initial_sidebar_state="expanded",
     )
 
     _init_db()
     _inject_css()
 
-    # ── Require login ─────────────────────────────────────────────────────
+    # Add JavaScript to fix toggle button
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+    function fixToggle() {
+        const toggle = document.querySelector(
+            '[data-testid="collapsedControl"]'
+        );
+        if (toggle) {
+            const spans = toggle.querySelectorAll('span');
+            spans.forEach(s => {
+                if (s.textContent.includes('keyboard')) {
+                    s.style.display = 'none';
+                }
+            });
+        }
+    }
+    setInterval(fixToggle, 500);
+    </script>
+    """, height=0)
+
     if not st.session_state.get("user_id"):
         page_login()
         return
 
     _init_state()
 
-    # ── Sidebar ──────────────────────────────────────────────────────────
-    _render_sidebar()
+    with st.sidebar:
+        uname = st.session_state.get("username", "")
+        
+        st.markdown(
+            f'<div style="text-align:center;padding:24px 16px 16px;">'
+            f'<div style="display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,0.48);margin:0 auto 12px;border:1.5px solid rgba(255,255,255,0.72);box-shadow:0 6px 22px rgba(150,120,200,0.28),0 1px 0 rgba(255,255,255,0.78) inset;">'
+            f'<svg width="28" height="28" viewBox="0 0 28 28"><defs><linearGradient id="sg2" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#c4703a"/><stop offset="100%" stop-color="#e8a060"/></linearGradient></defs><path d="M2,14 C5,8 8,8 11,14 C14,20 17,20 20,14 C22,10 24,12 26,14" fill="none" stroke="url(#sg2)" stroke-width="2.8" stroke-linecap="round"/></svg>'
+            f'</div>'
+            f'<div style="font-size:18px;font-weight:900;font-family:Playfair Display,serif;color:#2d1a0e;letter-spacing:-0.3px;">Clarity Coach</div>'
+            f'<div style="font-size:12px;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;margin-top:4px;font-weight:600;">{uname}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
-    # ── Route ────────────────────────────────────────────────────────────
+        st.divider()
+
+        nav = st.radio(
+            "Navigation",
+            options=_NAV_OPTIONS,
+            index=_PAGE_IDX.get(st.session_state.page, 0),
+            label_visibility="collapsed"
+        )
+        desired = _NAV_PAGE_MAP[nav]
+        if desired != st.session_state.page:
+            _nav_to(desired)
+
+        st.divider()
+
+        if st.session_state.baseline:
+            st.metric(
+                "Baseline",
+                f"{st.session_state.baseline['clarity']}%"
+            )
+
+        completed_count = sum(
+            1 for s in st.session_state.ex_states.values()
+            if s["completed"]
+        )
+        st.metric(
+            "Completed",
+            f"{completed_count} / {len(EXERCISES)}"
+        )
+
+        pct = completed_count / len(EXERCISES)
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.32);border-radius:99px;height:8px;margin:8px 0 4px;border:1px solid rgba(255,255,255,0.52);box-shadow:inset 0 2px 6px rgba(150,120,200,0.20);">'
+            f'<div style="width:{pct*100:.0f}%;height:100%;border-radius:99px;background:linear-gradient(90deg,#c4703a,#e8a060);min-width:8px;"></div>'
+            f'</div>'
+            f'<div style="font-size:11px;font-family:Plus Jakarta Sans,sans-serif;font-weight:700;color:#7a5540;text-align:center;margin-bottom:8px;">{completed_count} of {len(EXERCISES)} complete</div>',
+            unsafe_allow_html=True
+        )
+
+        st.divider()
+
+        streak = _get_streak()
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(16px);border-radius:18px;padding:14px 16px;margin:8px 0;border:1.5px solid rgba(255,200,150,0.45);box-shadow:0 4px 18px rgba(220,150,100,0.20);">'
+            f'<div style="font-size:10px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:1.5px;color:#c4906a;text-transform:uppercase;margin-bottom:4px;">Practice Streak</div>'
+            f'<div style="font-size:26px;font-weight:900;font-family:Playfair Display,serif;color:#c4703a;">{streak} day{"s" if streak != 1 else ""}</div>'
+            f'<div style="font-size:11px;font-family:Plus Jakarta Sans,sans-serif;font-weight:600;color:#c4906a;margin-top:3px;">{"Keep it going!" if streak >= 3 else "Practice daily to build your streak"}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        st.divider()
+
+        if st.button(
+            "Reset All Progress",
+            use_container_width=True
+        ):
+            uid   = st.session_state.get("user_id")
+            uname2 = st.session_state.get("username")
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
+            st.session_state.user_id  = uid
+            st.session_state.username = uname2
+            if uid:
+                with _db() as conn:
+                    conn.execute(
+                        "DELETE FROM progress WHERE user_id = ?",
+                        (uid,)
+                    )
+            st.rerun()
+
+        if st.button("Log Out", use_container_width=True):
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
+            st.rerun()
+
     page = st.session_state.page
-
-    if page == "home":
-        page_home()
-    elif page == "exercises":
-        page_exercises()
-    elif page == "progress":
-        page_progress()
+    if   page == "home":      page_home()
+    elif page == "exercises": page_exercises()
+    elif page == "progress":  page_progress()
+    elif page == "mood":      page_mood()
+    elif page == "report":    page_report()
+    elif page == "shadowing": page_shadowing()
 
 
 if __name__ == "__main__":
