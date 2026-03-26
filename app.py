@@ -767,17 +767,30 @@ def _smooth_corrected_audio(signal: np.ndarray, sr: int) -> np.ndarray:
 # === CLARITY SCORE IMPLEMENTATION: START ===
 def _compute_clarity(result: dict) -> float:
     """
-    Clarity score weighted by stutter type severity.
-    - Pauses (-3): long blocks
-    - Prolongations (-5): audible stretching
-    - Repetitions (-6): most disruptive to fluency
+    Improved clarity score that's more realistic for natural speech patterns.
+    - Pauses (-1): Normal pauses are natural, only very long ones penalized
+    - Prolongations (-2): Mild stretching is common in natural speech
+    - Repetitions (-3): Some repetition is normal, excessive is penalized
+    - Base score starts at 85% (most natural speech is quite clear)
     Capped to [0, 100].
     """
     pauses  = result.get("pause_events", 0)
     prolong = result.get("prolongation_events", 0)
     rep     = result.get("repetition_events", 0)
-    penalty = pauses * 3 + prolong * 5 + rep * 6
-    return round(max(0.0, min(100.0, 100.0 - penalty)), 1)
+    
+    # Start with a base score of 85% (natural speech baseline)
+    base_score = 85.0
+    
+    # More lenient penalties for natural speech patterns
+    penalty = pauses * 1 + prolong * 2 + rep * 3
+    
+    # Apply penalty but don't go below 0
+    clarity = max(0.0, base_score - penalty)
+    
+    # Cap at 100%
+    clarity = min(100.0, clarity)
+    
+    return round(clarity, 1)
 # === CLARITY SCORE IMPLEMENTATION: END ===
 
 
@@ -3313,6 +3326,10 @@ def page_exercise_detail(ex_id: int):
             # Score card
             _score_card(clarity, "This Attempt")
 
+            # ── Immediate celebration if target reached ────────────────────────────
+            if clarity >= _ex_target(ex_id):
+                st.balloons()
+            
             # Compare with baseline
             if st.session_state.baseline:
                 bl_score = st.session_state.baseline["clarity"]
@@ -3336,7 +3353,6 @@ def page_exercise_detail(ex_id: int):
 
             # ── Pass / Fail ───────────────────────────────────────────────
             if clarity >= _ex_target(ex_id):
-                st.balloons()
                 st.markdown(
                     f'<div style="background:linear-gradient(135deg,rgba(30,15,50,0.90),rgba(15,30,60,0.90));border-radius:24px;padding:28px;text-align:center;border:2px solid rgba(196,112,58,0.70);box-shadow:0 0 40px rgba(196,112,58,0.35),0 0 80px rgba(196,112,58,0.15);margin:16px 0;animation:unlockPop 0.5s ease-out;">'
                     f'<div style="font-size:36px;font-weight:900;background:linear-gradient(90deg,#f0c080,#c4703a,#f0a060);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;">Level Complete!</div>'
@@ -6068,6 +6084,7 @@ def _safe_date(date_str):
 def page_shadowing():
     st.title("Shadowing Practice")
     
+    # Header explanation at the top
     st.markdown(
         '<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;margin-bottom:20px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;">'
         '<div style="font-size:16px;font-weight:600;font-family:Playfair Display,serif;color:#2d1a0e;margin-bottom:16px;">What is Shadowing?</div>'
@@ -6078,8 +6095,40 @@ def page_shadowing():
         unsafe_allow_html=True
     )
     
-    # Sample audio selection
-    st.subheader("Choose a Practice Audio")
+    # Practice instructions
+    st.markdown(
+        '<div style="background:rgba(176,148,212,0.20);border-radius:16px;padding:20px 24px;border:1.5px solid rgba(176,148,212,0.35);margin-bottom:20px;">'
+        '<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;margin-bottom:12px;">📝 Practice Instructions:</div>'
+        '<ol style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;line-height:1.75;padding-left:20px;">'
+        '<li>Choose your practice audio from the options below</li>'
+        '<li>Click "Play Audio" to hear the sample and see the transcription</li>'
+        '<li>Put on headphones and listen to the audio</li>'
+        '<li>Start speaking along with the audio, about 1-2 seconds behind</li>'
+        '<li>Match the speaker\'s rhythm and intonation exactly</li>'
+        '<li>Record your attempt using the recorder below</li>'
+        '<li>Don\'t worry about perfection - focus on flow</li>'
+        '<li>Practice for at least 5 minutes daily</li>'
+        '</ol>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+    
+    # Interactive section at the bottom - ALL CONTROLS TOGETHER
+    st.markdown(
+        '<div style="font-size:18px;font-weight:700;font-family:Playfair Display,serif;color:#2d1a0e;margin-bottom:20px;padding-bottom:10px;border-bottom:2px solid rgba(176,148,212,0.30);">🎯 Practice Station</div>',
+        unsafe_allow_html=True
+    )
+    
+    # Audio selection
+    st.subheader("1. Choose Practice Audio")
+    
+    # Practice mode selection
+    practice_mode = st.radio(
+        "Practice Mode:",
+        ["🎯 Full Audio - Listen & Shadow", "📖 Line-by-Line - Learn & Practice"],
+        key="practice_mode",
+        horizontal=True
+    )
     
     audio_options = [
         "Slow, Clear Speech - 60 seconds",
@@ -6094,60 +6143,523 @@ def page_shadowing():
         key="shadowing_audio"
     )
     
-    # Practice instructions
-    st.markdown(
-        '<div style="background:rgba(176,148,212,0.20);border-radius:16px;padding:20px 24px;border:1.5px solid rgba(176,148,212,0.35);margin:16px 0;">'
-        '<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;margin-bottom:12px;">📝 Practice Instructions:</div>'
-        '<ol style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;line-height:1.75;padding-left:20px;">'
-        '<li>Put on headphones and listen to the audio</li>'
-        '<li>Start speaking along with the audio, about 1-2 seconds behind</li>'
-        '<li>Match the speaker\'s rhythm and intonation exactly</li>'
-        '<li>Don\'t worry about perfection - focus on flow</li>'
-        '<li>Practice for at least 5 minutes daily</li>'
-        '</ol>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    # Generate and play audio based on selection
+    def generate_shadowing_audio(selection):
+        """Generate audio using text-to-speech for shadowing practice"""
+        import io
+        import tempfile
+        import os
+        
+        # Text scripts for different difficulty levels
+        scripts = {
+            "Slow, Clear Speech - 60 seconds": """
+            The morning sun rises gently over the quiet hills. Birds begin their daily songs, filling the air with sweet melodies. A gentle breeze whispers through the tall trees, carrying the fresh scent of pine and earth. Dew drops sparkle on green leaves like tiny diamonds. Nature awakens slowly, peacefully, beautifully. Each moment brings new life and energy to the world around us. The stream flows steadily, carving its path through the landscape with patient persistence. Flowers bloom in vibrant colors, painting the meadow with nature's artwork. This peaceful rhythm of life continues day after day, teaching us about patience and growth.
+            """,
+            
+            "Medium Pace - 45 seconds": """
+            Technology has transformed how we communicate and connect with others around the world. Social media platforms enable instant sharing of ideas and experiences across vast distances. Video conferencing brings people together face-to-face regardless of physical location. Digital tools enhance productivity and creativity in both personal and professional settings. The internet provides access to endless information and learning opportunities. Mobile devices keep us connected and informed throughout our daily activities. This digital revolution continues to evolve, bringing new innovations and possibilities for the future.
+            """,
+            
+            "Natural Conversation - 30 seconds": """
+            I went to the new coffee shop downtown this morning and was really impressed by their menu. They have this amazing cold brew that's perfectly smooth, plus they offer oat milk alternatives which is great for people with dietary restrictions. The atmosphere is really cozy too, with comfortable seating and soft background music. I ended up working there for a few hours and got so much done. Have you tried it yet? I think you'd really like their pastries too.
+            """,
+            
+            "Professional Reading - 40 seconds": """
+            Research indicates that consistent practice is essential for developing fluent speech patterns. Studies demonstrate that shadowing techniques significantly improve speech clarity and confidence. Participants who engaged in daily shadowing exercises showed measurable progress within six weeks. The combination of auditory modeling and active repetition creates strong neural pathways for fluent communication. This evidence-based approach provides reliable results for individuals seeking speech improvement. Professional speech therapists recommend incorporating shadowing into comprehensive treatment plans.
+            """
+        }
+        
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            
+            # Set voice properties based on selection
+            if "Slow" in selection:
+                engine.setProperty('rate', 120)  # Slow speech
+            elif "Medium" in selection:
+                engine.setProperty('rate', 150)  # Medium speech
+            elif "Natural" in selection:
+                engine.setProperty('rate', 170)  # Natural conversation
+            else:  # Professional
+                engine.setProperty('rate', 160)  # Professional reading
+            
+            # Use a clear voice if available
+            voices = engine.getProperty('voices')
+            if voices:
+                # Try to find a clear female voice
+                for voice in voices:
+                    if 'female' in voice.name.lower() and 'english' in voice.name.lower():
+                        engine.setProperty('voice', voice.id)
+                        break
+                else:
+                    # Fallback to first voice
+                    engine.setProperty('voice', voices[0].id)
+            
+            # Generate audio
+            script = scripts.get(selection, scripts["Slow, Clear Speech - 60 seconds"])
+            
+            # Use in-memory buffer instead of temporary file
+            import wave
+            import struct
+            
+            # Create in-memory WAV file
+            audio_buffer = io.BytesIO()
+            
+            # Save to buffer first
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+            temp_file.close()
+            temp_path = temp_file.name
+            
+            try:
+                engine.save_to_file(script, temp_path)
+                engine.runAndWait()
+                
+                # Read the file into memory
+                with open(temp_path, 'rb') as f:
+                    audio_bytes = f.read()
+                
+                return audio_bytes
+            finally:
+                # Clean up temp file with retry logic
+                import time
+                for _ in range(3):  # Retry up to 3 times
+                    try:
+                        os.unlink(temp_path)
+                        break
+                    except (PermissionError, OSError):
+                        time.sleep(0.1)  # Wait 100ms and retry
+                        
+        except ImportError:
+            # Try gTTS as fallback
+            try:
+                from gtts import gTTS
+                import base64
+                
+                script = scripts.get(selection, scripts["Slow, Clear Speech - 60 seconds"])
+                
+                # Adjust speed based on selection
+                if "Slow" in selection:
+                    slow = True
+                else:
+                    slow = False
+                
+                tts = gTTS(script, lang='en', slow=slow)
+                
+                # Save to in-memory buffer
+                audio_buffer = io.BytesIO()
+                tts.write_to_fp(audio_buffer)
+                audio_buffer.seek(0)
+                
+                return audio_buffer.getvalue()
+                
+            except ImportError:
+                st.error("Text-to-speech library not installed. Please install one of:")
+                st.code("pip install pyttsx3")
+                st.code("pip install gtts")
+                return None
+        except Exception as e:
+            # If pyttsx3 fails, try gTTS as fallback
+            try:
+                from gtts import gTTS
+                import base64
+                
+                script = scripts.get(selection, scripts["Slow, Clear Speech - 60 seconds"])
+                
+                # Adjust speed based on selection
+                if "Slow" in selection:
+                    slow = True
+                else:
+                    slow = False
+                
+                tts = gTTS(script, lang='en', slow=slow)
+                
+                # Save to in-memory buffer
+                audio_buffer = io.BytesIO()
+                tts.write_to_fp(audio_buffer)
+                audio_buffer.seek(0)
+                
+                return audio_buffer.getvalue()
+                
+            except ImportError:
+                st.error(f"Audio generation failed: {str(e)}")
+                st.error("Please install a text-to-speech library:")
+                st.code("pip install pyttsx3")
+                st.code("pip install gtts")
+                return None
     
-    # Recording section
-    st.subheader("Record Your Shadowing")
-    signal, sr = _recording_section("shadowing_rec")
+    # Audio player and transcription section
+    st.subheader("2. Audio Player & Transcription")
     
-    if signal is not None:
-        if st.button(
-            "Analyze Shadowing",
-            type="primary",
-            use_container_width=True,
-            key="shadowing_analyze"
-        ):
-            with st.spinner("Analyzing your shadowing..."):
-                result, clarity = _analyze(signal, sr)
-                result["corrected_signal"] = \
-                    _smooth_corrected_audio(
-                        result["corrected_signal"],
-                        result["sr"]
+    if practice_mode == "🎯 Full Audio - Listen & Shadow":
+        # Full Audio Mode - Everything Together
+        if st.button("🎵 Play Full Audio", type="secondary", key="play_full_audio"):
+            with st.spinner("Generating audio..."):
+                audio_bytes = generate_shadowing_audio(selected)
+                if audio_bytes:
+                    st.audio(audio_bytes, format="audio/wav")
+                    
+                    # Show transcription
+                    scripts = {
+                        "Slow, Clear Speech - 60 seconds": """
+                        The morning sun rises gently over the quiet hills. Birds begin their daily songs, filling the air with sweet melodies. A gentle breeze whispers through the tall trees, carrying the fresh scent of pine and earth. Dew drops sparkle on the green leaves like tiny diamonds. Nature awakens slowly, peacefully, beautifully. Each moment brings new life and energy to the world around us. The stream flows steadily, carving its path through the landscape with patient persistence. Flowers bloom in vibrant colors, painting the meadow with nature's artwork. This peaceful rhythm of life continues day after day, teaching us about patience and growth.
+                        """,
+                        
+                        "Medium Pace - 45 seconds": """
+                        Technology has transformed how we communicate and connect with others around the world. Social media platforms enable instant sharing of ideas and experiences across vast distances. Video conferencing brings people together face-to-face regardless of physical location. Digital tools enhance productivity and creativity in both personal and professional settings. The internet provides access to endless information and learning opportunities. Mobile devices keep us connected and informed throughout our daily activities. This digital revolution continues to evolve, bringing new innovations and possibilities for the future.
+                        """,
+                        
+                        "Natural Conversation - 30 seconds": """
+                        I went to the new coffee shop downtown this morning and was really impressed by their menu. They have this amazing cold brew that's perfectly smooth, plus they offer oat milk alternatives which is great for people with dietary restrictions. The atmosphere is really cozy too, with comfortable seating and soft background music. I ended up working there for a few hours and got so much done. Have you tried it yet? I think you'd really like their pastries too.
+                        """,
+                        
+                        "Professional Reading - 40 seconds": """
+                        Research indicates that consistent practice is essential for developing fluent speech patterns. Studies demonstrate that shadowing techniques significantly improve speech clarity and confidence. Participants who engaged in daily shadowing exercises showed measurable progress within six weeks. The combination of auditory modeling and active repetition creates strong neural pathways for fluent communication. This evidence-based approach provides reliable results for individuals seeking speech improvement. Professional speech therapists recommend incorporating shadowing into comprehensive treatment plans.
+                        """
+                    }
+                    
+                    # Display transcription
+                    st.markdown(
+                        '<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;margin-top:16px;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+                        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:#7a5540;text-transform:uppercase;margin-bottom:8px;">📝 Full Text Transcription</div>'
+                        '<div style="font-size:13px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#3a2010;line-height:1.75;">'
+                        + scripts.get(selected, "").strip() +
+                        '</div>'
+                        '</div>',
+                        unsafe_allow_html=True
                     )
+        
+        # Recording section - RIGHT AFTER AUDIO
+        st.subheader("3. Record Your Shadowing")
+        
+        # Show transcription while recording for both modes
+        if practice_mode == "🎯 Full Audio - Listen & Shadow":
+            # Show full transcription above recorder
+            scripts = {
+                "Slow, Clear Speech - 60 seconds": """
+                The morning sun rises gently over the quiet hills. Birds begin their daily songs, filling the air with sweet melodies. A gentle breeze whispers through the tall trees, carrying the fresh scent of pine and earth. Dew drops sparkle on the green leaves like tiny diamonds. Nature awakens slowly, peacefully, beautifully. Each moment brings new life and energy to the world around us. The stream flows steadily, carving its path through the landscape with patient persistence. Flowers bloom in vibrant colors, painting the meadow with nature's artwork. This peaceful rhythm of life continues day after day, teaching us about patience and growth.
+                """,
+                
+                "Medium Pace - 45 seconds": """
+                Technology has transformed how we communicate and connect with others around the world. Social media platforms enable instant sharing of ideas and experiences across vast distances. Video conferencing brings people together face-to-face regardless of physical location. Digital tools enhance productivity and creativity in both personal and professional settings. The internet provides access to endless information and learning opportunities. Mobile devices keep us connected and informed throughout our daily activities. This digital revolution continues to evolve, bringing new innovations and possibilities for the future.
+                """,
+                
+                "Natural Conversation - 30 seconds": """
+                I went to the new coffee shop downtown this morning and was really impressed by their menu. They have this amazing cold brew that's perfectly smooth, plus they offer oat milk alternatives which is great for people with dietary restrictions. The atmosphere is really cozy too, with comfortable seating and soft background music. I ended up working there for a few hours and got so much done. Have you tried it yet? I think you'd really like their pastries too.
+                """,
+                
+                "Professional Reading - 40 seconds": """
+                Research indicates that consistent practice is essential for developing fluent speech patterns. Studies demonstrate that shadowing techniques significantly improve speech clarity and confidence. Participants who engaged in daily shadowing exercises showed measurable progress within six weeks. The combination of auditory modeling and active repetition creates strong neural pathways for fluent communication. This evidence-based approach provides reliable results for individuals seeking speech improvement. Professional speech therapists recommend incorporating shadowing into comprehensive treatment plans.
+                """
+            }
             
-            _score_card(clarity, "Shadowing Score")
-            _event_metrics(result)
+            # Display transcription above recorder
+            st.markdown(
+                '<div style="background:rgba(255,255,200,0.3);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;margin-bottom:16px;border:1.5px solid rgba(255,255,200,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;position:sticky;top:10px;z-index:100;">'
+                '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:#7a5540;text-transform:uppercase;margin-bottom:8px;">📝 Text While Recording</div>'
+                '<div style="font-size:13px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#3a2010;line-height:1.75;">'
+                + scripts.get(selected, "").strip() +
+                '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        
+        else:  # Line-by-line mode - show current phrase
+            # Get current phrase for display
+            scripts = {
+                "Slow, Clear Speech - 60 seconds": """
+                    The morning sun rises gently over the quiet hills. Birds begin their daily songs, filling the air with sweet melodies. A gentle breeze whispers through the tall trees, carrying the fresh scent of pine and earth. Dew drops sparkle on the green leaves like tiny diamonds. Nature awakens slowly, peacefully, beautifully. Each moment brings new life and energy to the world around us. The stream flows steadily, carving its path through the landscape with patient persistence. Flowers bloom in vibrant colors, painting the meadow with nature's artwork. This peaceful rhythm of life continues day after day, teaching us about patience and growth.
+                """,
+                
+                "Medium Pace - 45 seconds": """
+                    Technology has transformed how we communicate and connect with others around the world. Social media platforms enable instant sharing of ideas and experiences across vast distances. Video conferencing brings people together face-to-face regardless of physical location. Digital tools enhance productivity and creativity in both personal and professional settings. The internet provides access to endless information and learning opportunities. Mobile devices keep us connected and informed throughout our daily activities. This digital revolution continues to evolve, bringing new innovations and possibilities for the future.
+                """,
+                
+                "Natural Conversation - 30 seconds": """
+                    I went to the new coffee shop downtown this morning and was really impressed by their menu. They have this amazing cold brew that's perfectly smooth, plus they offer oat milk alternatives which is great for people with dietary restrictions. The atmosphere is really cozy too, with comfortable seating and soft background music. I ended up working there for a few hours and got so much done. Have you tried it yet? I think you'd really like their pastries too.
+                """,
+                
+                "Professional Reading - 40 seconds": """
+                    Research indicates that consistent practice is essential for developing fluent speech patterns. Studies demonstrate that shadowing techniques significantly improve speech clarity and confidence. Participants who engaged in daily shadowing exercises showed measurable progress within six weeks. The combination of auditory modeling and active repetition creates strong neural pathways for fluent communication. This evidence-based approach provides reliable results for individuals seeking speech improvement. Professional speech therapists recommend incorporating shadowing into comprehensive treatment plans.
+                """
+            }
             
-            # Feedback based on score
-            if clarity >= 70:
-                st.success(
-                    f"Excellent shadowing! Your score of **{clarity}%** shows great rhythm matching. "
-                    "Keep practicing to make this your natural speech pattern!"
+            # Split into phrases
+            import re
+            full_script = scripts.get(selected, "")
+            phrases = re.split(r'[.!?]+', full_script.strip())
+            phrases = [p.strip() for p in phrases if p.strip() and len(p.strip()) > 10]
+            
+            # Initialize phrase_index if not exists
+            if "phrase_index" not in st.session_state:
+                st.session_state.phrase_index = 1
+            
+            current_phrase_index = st.session_state.phrase_index
+            current_phrase = phrases[min(current_phrase_index - 1, len(phrases) - 1)]
+            
+            # Display current phrase above recorder
+            st.markdown(
+                '<div style="background:rgba(255,255,200,0.3);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;margin-bottom:16px;border:1.5px solid rgba(255,255,200,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;position:sticky;top:10px;z-index:100;">'
+                '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:#7a5540;text-transform:uppercase;margin-bottom:8px;">📝 Phrase While Recording</div>'
+                '<div style="font-size:16px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#3a2010;line-height:1.6;">'
+                f'<b>Phrase {current_phrase_index}:</b> {current_phrase}'
+                '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        
+        signal, sr = _recording_section("shadowing_rec")
+        
+        if signal is not None:
+            if st.button(
+                "Analyze Shadowing",
+                type="primary",
+                use_container_width=True,
+                key="shadowing_analyze"
+            ):
+                with st.spinner("Analyzing your shadowing..."):
+                    result, clarity = _analyze(signal, sr)
+                    result["corrected_signal"] = \
+                        _smooth_corrected_audio(
+                            result["corrected_signal"],
+                            result["sr"]
+                        )
+                
+                _score_card(clarity, "Shadowing Score")
+                _event_metrics(result)
+                
+                # Feedback based on score
+                if clarity >= 80:
+                    st.success(
+                        f"Excellent speech! Your score of **{clarity}%** shows very natural fluency. "
+                        "Your speech patterns are clear and well-paced!"
+                    )
+                elif clarity >= 65:
+                    st.info(
+                        f"Good clarity! Score: **{clarity}%**. "
+                        "Your speech has natural rhythm with minor areas for improvement."
+                    )
+                elif clarity >= 50:
+                    st.info(
+                        f"Fair clarity: **{clarity}%**. "
+                        "Focus on maintaining smooth flow and reducing hesitations."
+                    )
+                else:
+                    st.warning(
+                        f"Score: **{clarity}%**. "
+                        "Don't worry! Focus on shorter phrases and practice rhythm. Line-by-line mode can help!"
+                    )
+    
+    else:  # Line-by-line mode - EVERYTHING TOGETHER
+        st.markdown(
+            '<div style="background:rgba(240,248,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;margin-bottom:16px;border:1.5px solid rgba(240,248,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+            '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:#7a5540;text-transform:uppercase;margin-bottom:8px;">📖 Line-by-Line Practice</div>'
+            '<div style="font-size:12px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#3a2010;line-height:1.75;margin-bottom:12px;">'
+            'Perfect for learning speech patterns at your own pace. Each phrase plays separately so you can focus on rhythm and flow without pressure.'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+        
+        # Split scripts into phrases for line-by-line practice
+        def split_into_phrases(script):
+            """Split script into manageable phrases for line-by-line practice"""
+            import re
+            # Split by sentence-ending punctuation
+            phrases = re.split(r'[.!?]+', script.strip())
+            # Clean up and filter empty phrases
+            phrases = [p.strip() for p in phrases if p.strip() and len(p.strip()) > 10]
+            return phrases
+        
+        # Get phrases for selected script
+        scripts = {
+            "Slow, Clear Speech - 60 seconds": """
+                The morning sun rises gently over the quiet hills. Birds begin their daily songs, filling the air with sweet melodies. A gentle breeze whispers through the tall trees, carrying the fresh scent of pine and earth. Dew drops sparkle on the green leaves like tiny diamonds. Nature awakens slowly, peacefully, beautifully. Each moment brings new life and energy to the world around us. The stream flows steadily, carving its path through the landscape with patient persistence. Flowers bloom in vibrant colors, painting the meadow with nature's artwork. This peaceful rhythm of life continues day after day, teaching us about patience and growth.
+            """,
+            
+            "Medium Pace - 45 seconds": """
+                Technology has transformed how we communicate and connect with others around the world. Social media platforms enable instant sharing of ideas and experiences across vast distances. Video conferencing brings people together face-to-face regardless of physical location. Digital tools enhance productivity and creativity in both personal and professional settings. The internet provides access to endless information and learning opportunities. Mobile devices keep us connected and informed throughout our daily activities. This digital revolution continues to evolve, bringing new innovations and possibilities for the future.
+            """,
+            
+            "Natural Conversation - 30 seconds": """
+                I went to the new coffee shop downtown this morning and was really impressed by their menu. They have this amazing cold brew that's perfectly smooth, plus they offer oat milk alternatives which is great for people with dietary restrictions. The atmosphere is really cozy too, with comfortable seating and soft background music. I ended up working there for a few hours and got so much done. Have you tried it yet? I think you'd really like their pastries too.
+            """,
+            
+            "Professional Reading - 40 seconds": """
+                Research indicates that consistent practice is essential for developing fluent speech patterns. Studies demonstrate that shadowing techniques significantly improve speech clarity and confidence. Participants who engaged in daily shadowing exercises showed measurable progress within six weeks. The combination of auditory modeling and active repetition creates strong neural pathways for fluent communication. This evidence-based approach provides reliable results for individuals seeking speech improvement. Professional speech therapists recommend incorporating shadowing into comprehensive treatment plans.
+            """
+        }
+        
+        full_script = scripts.get(selected, "")
+        phrases = split_into_phrases(full_script)
+        
+        if phrases:
+            st.markdown(f"**Practice {len(phrases)} short phrases:**")
+            
+            # Simple navigation controls
+            # Initialize phrase_index in session state if not exists
+            if "phrase_index" not in st.session_state:
+                st.session_state.phrase_index = 1
+            
+            # Navigation buttons
+            col1, col2, col3 = st.columns([1, 2, 1])
+            
+            with col1:
+                if st.button("⬅️ Previous", key="prev_phrase", disabled=st.session_state.phrase_index <= 1):
+                    st.session_state.phrase_index -= 1
+                    st.rerun()
+            
+            with col2:
+                current_phrase_index = st.session_state.phrase_index
+                st.markdown(
+                    f'<div style="text-align:center;background:rgba(176,148,212,0.15);border-radius:12px;padding:12px;">'
+                    f'<div style="font-size:14px;font-weight:600;color:#2d1a0e;">Phrase {current_phrase_index} of {len(phrases)}</div>'
+                    f'<div style="font-size:12px;color:#5a3520;margin-top:4px;">Progress: {((current_phrase_index-1)/len(phrases)*100):.0f}%</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
                 )
-            elif clarity >= 50:
-                st.info(
-                    f"Good effort! Score: **{clarity}%**. "
-                    "Focus on staying relaxed and matching the speaker's pace more closely."
-                )
-            else:
-                st.warning(
-                    f"Score: **{clarity}%**. "
-                    "Don't worry! Shadowing takes practice. Try shorter audio segments and focus on rhythm over accuracy."
-                )
-
+            
+            with col3:
+                if st.button("Next ➡️", key="next_phrase", disabled=st.session_state.phrase_index >= len(phrases)):
+                    st.session_state.phrase_index += 1
+                    st.rerun()
+            
+            # Current phrase display
+            current_phrase = phrases[min(current_phrase_index - 1, len(phrases) - 1)]
+            
+            st.markdown(
+                '<div style="background:rgba(255,255,255,0.45);backdrop-filter:blur(10px);border-radius:12px;padding:24px;margin:16px 0;border:1px solid rgba(176,148,212,0.30);box-shadow:0 2px 8px rgba(120,60,20,0.08);">'
+                '<div style="font-size:16px;font-weight:600;font-family:Playfair Display,serif;color:#2d1a0e;margin-bottom:16px;">📝 Practice This Phrase:</div>'
+                f'<div style="font-size:20px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#3a2010;line-height:1.6;">{current_phrase}</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            
+            # Play button
+            if st.button(f"🎵 Play Phrase {current_phrase_index}", type="primary", use_container_width=True, key="play_phrase"):
+                with st.spinner("Generating phrase audio..."):
+                    phrase_script = current_phrase
+                    
+                    try:
+                        import pyttsx3
+                        engine = pyttsx3.init()
+                        
+                        # Set voice properties
+                        if "Slow" in selected:
+                            engine.setProperty('rate', 120)
+                        elif "Medium" in selected:
+                            engine.setProperty('rate', 150)
+                        elif "Natural" in selected:
+                            engine.setProperty('rate', 170)
+                        else:
+                            engine.setProperty('rate', 160)
+                        
+                        # Use a clear voice if available
+                        voices = engine.getProperty('voices')
+                        if voices:
+                            for voice in voices:
+                                if 'female' in voice.name.lower() and 'english' in voice.name.lower():
+                                    engine.setProperty('voice', voice.id)
+                                    break
+                            else:
+                                engine.setProperty('voice', voices[0].id)
+                        
+                        # Generate phrase audio
+                        import tempfile
+                        import time
+                        import os
+                        
+                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+                        temp_file.close()
+                        temp_path = temp_file.name
+                        
+                        try:
+                            engine.save_to_file(phrase_script, temp_path)
+                            engine.runAndWait()
+                            
+                            # Read file into memory
+                            with open(temp_path, 'rb') as f:
+                                phrase_audio_bytes = f.read()
+                            
+                            st.audio(phrase_audio_bytes, format="audio/wav")
+                            st.success(f"🎧 Phrase {current_phrase_index} ready! Listen and practice shadowing.")
+                            
+                        finally:
+                            # Clean up temp file
+                            for _ in range(3):
+                                try:
+                                    os.unlink(temp_path)
+                                    break
+                                except (PermissionError, OSError):
+                                    time.sleep(0.1)
+                                    
+                    except Exception as e:
+                        st.error(f"Audio generation failed: {str(e)}")
+            
+            # Simple progress bar
+            progress_percent = (current_phrase_index - 1) / len(phrases)
+            st.markdown(
+                f'<div style="background:rgba(176,148,212,0.15);border-radius:8px;padding:8px;margin-top:16px;">'
+                f'<div style="background:rgba(255,255,255,0.3);border-radius:4px;height:8px;margin-bottom:8px;">'
+                f'<div style="width:{progress_percent*100:.0f}%;height:100%;border-radius:4px;background:linear-gradient(90deg,#c4703a,#e8a060);"></div>'
+                f'</div>'
+                f'<div style="font-size:12px;font-weight:600;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;text-align:center;">'
+                f'Practice Progress: {progress_percent*100:.0f}% Complete'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            
+            st.info("💡 **How to practice:** 1️⃣ Listen to the phrase 2️⃣ Shadow it (repeat along) 3️⃣ Record yourself 4️⃣ Check your score")
+            
+            # Recording section for current phrase
+            st.markdown(
+                '<div style="font-size:16px;font-weight:600;font-family:Playfair Display,serif;color:#2d1a0e;margin-top:24px;margin-bottom:12px;">🎙️ Record This Phrase</div>',
+                unsafe_allow_html=True
+            )
+            
+            signal, sr = _recording_section(f"phrase_{current_phrase_index}_rec")
+            
+            if signal is not None:
+                if st.button(
+                    f"Analyze Phrase {current_phrase_index}",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"analyze_phrase_{current_phrase_index}"
+                ):
+                    with st.spinner("Analyzing your shadowing..."):
+                        result, clarity = _analyze(signal, sr)
+                        result["corrected_signal"] = \
+                            _smooth_corrected_audio(
+                                result["corrected_signal"],
+                                result["sr"]
+                            )
+                    
+                    _score_card(clarity, f"Phrase {current_phrase_index} Score")
+                    _event_metrics(result)
+                    
+                    # Feedback based on score
+                    if clarity >= 80:
+                        st.success(
+                            f"Excellent! Phrase {current_phrase_index} score: **{clarity}%** - Very natural fluency!"
+                        )
+                    elif clarity >= 65:
+                        st.info(
+                            f"Good job! Phrase {current_phrase_index} score: **{clarity}%** - Natural rhythm with minor improvements needed."
+                        )
+                    elif clarity >= 50:
+                        st.info(
+                            f"Phrase {current_phrase_index} score: **{clarity}%** - Focus on smooth flow and reducing hesitations."
+                        )
+                    else:
+                        st.warning(
+                            f"Phrase {current_phrase_index} score: **{clarity}%** - Keep practicing! Try listening again and shadowing more slowly."
+                        )
+        
+        else:
+            st.error("No phrases available for this selection.")
+    
+    # Quick tip at the bottom
+    st.info("💡 **Pro Tip:** Work through all audio levels from Slow to Professional for maximum improvement!")
 
 def main():
     st.set_page_config(
