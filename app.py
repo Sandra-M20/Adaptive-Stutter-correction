@@ -54,6 +54,38 @@ def _init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS challenges (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                challenge_date TEXT NOT NULL,
+                challenge_type TEXT NOT NULL,
+                score        REAL,
+                xp_earned    INTEGER DEFAULT 0,
+                completed    INTEGER DEFAULT 0,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS anon_handles (
+                user_id     INTEGER PRIMARY KEY,
+                handle      TEXT NOT NULL UNIQUE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mood_logs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                date         TEXT NOT NULL,
+                mood         TEXT NOT NULL,
+                stress       INTEGER NOT NULL,
+                notes        TEXT,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
 
 
 def _hash(password: str) -> str:
@@ -745,18 +777,27 @@ def _compute_clarity(result: dict) -> float:
 
 
 
-_NAV_OPTIONS  = ["Home", "Exercises", "Progress"]
+_NAV_OPTIONS  = ["Home","Exercises","Progress",
+                "Mood","Report","Coach","Shadowing",
+                "Challenge","Ranks"]
 _NAV_PAGE_MAP = {
     "Home":      "home",
     "Exercises": "exercises",
     "Progress":  "progress",
+    "Mood":      "mood",
+    "Report":    "report",
+    "Coach":     "coach",
+    "Shadowing": "shadowing",
+    "Challenge": "challenge",
+    "Ranks":     "leaderboard",
 }
-_PAGE_IDX = {"home": 0, "exercises": 1, "progress": 2}
+_PAGE_IDX = {"home": 0, "exercises": 1, "progress": 2, "mood": 3, "report": 4, "coach": 5, "shadowing": 6, "challenge": 7, "leaderboard": 8}
 
 def _nav_to(page: str):
     """Navigate to a top-level page. Radio re-derives its selection from page."""
-    st.session_state.page    = page
-    st.session_state.ex_open = None
+    st.session_state.page = page
+    if page != "exercises":
+        st.session_state.ex_open = None
     st.rerun()
 
 
@@ -770,6 +811,259 @@ def _get_tips(tip_type: str, n: int = 2) -> list:
 
 def _ex_target(ex_id: int) -> int:
     return EXERCISE_TARGETS.get(ex_id, 70)
+
+
+def _save_challenge(challenge_type: str, 
+                    score: float, xp: int):
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return
+    from datetime import date
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO challenges 
+               (user_id, challenge_date, challenge_type,
+                score, xp_earned, completed)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (user_id, str(date.today()),
+             challenge_type, score, xp)
+        )
+
+def _load_challenge_history() -> list:
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return []
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT challenge_date, challenge_type,
+                      score, xp_earned, completed
+               FROM challenges
+               WHERE user_id = ?
+               ORDER BY created_at DESC
+               LIMIT 30""",
+            (user_id,)
+        ).fetchall()
+    return [{"date": r[0], "type": r[1],
+             "score": r[2], "xp": r[3],
+             "completed": r[4]} for r in rows]
+
+def _get_today_challenge() -> dict:
+    from datetime import date
+    day = date.today().weekday()
+    challenges = {
+        0: {
+            "type": "Speed Round",
+            "day":  "Monday",
+            "description": "Read the passage at a steady confident pace. Focus on smooth continuous airflow. No rushing — smooth is faster than tense.",
+            "text": "The morning light filters through the tall trees casting long shadows across the forest floor. Birds call to each other in the canopy above. A gentle wind moves through the leaves creating a soft sound that fills the quiet air.",
+            "tip_type": "pacing",
+            "target": 65,
+            "xp": 150,
+            "color": "#c4703a",
+            "icon_path": '<path d="M14,4 L24,14 L14,24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/><path d="M4,4 L14,14 L4,24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>',
+        },
+        1: {
+            "type": "Whisper Challenge",
+            "day":  "Tuesday",
+            "description": "Speak at your absolute minimum volume while keeping every word clear and distinct. Whispering forces you to rely on articulation rather than volume.",
+            "text": "She walked quietly through the library her soft footsteps barely making a sound. The books lined the walls from floor to ceiling each one a world waiting to be discovered. She chose one gently and sat by the window.",
+            "tip_type": "tension",
+            "target": 60,
+            "xp": 150,
+            "color": "#90bcd4",
+            "icon_path": '<path d="M8,14 Q14,8 20,14 Q14,20 8,14Z" fill="none" stroke="white" stroke-width="2"/><line x1="4" y1="14" x2="24" y2="14" stroke="white" stroke-width="1.5" stroke-dasharray="2,3" opacity="0.5"/>',
+        },
+        2: {
+            "type": "Emotional Delivery",
+            "day":  "Wednesday",
+            "description": "Read this passage as if you are delivering wonderful news to someone you love. Let genuine warmth and excitement fill your voice naturally.",
+            "text": "Something incredible has happened today and I cannot wait to tell you about it. Everything we have been working toward has finally come together perfectly. This is the moment we have been waiting for and it is even better than we imagined.",
+            "tip_type": "confidence",
+            "target": 62,
+            "xp": 175,
+            "color": "#f0a0b8",
+            "icon_path": '<circle cx="14" cy="12" r="6" fill="none" stroke="white" stroke-width="2"/><path d="M10,11 Q14,15 18,11" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="11" cy="10" r="1" fill="white"/><circle cx="17" cy="10" r="1" fill="white"/>',
+        },
+        3: {
+            "type": "Tongue Twister Gauntlet",
+            "day":  "Thursday",
+            "description": "Read all three tongue twisters back to back without pausing between them. Use light consonant contacts — never force the sounds.",
+            "text": "She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. How much wood would a woodchuck chuck if a woodchuck could chuck wood.",
+            "tip_type": "articulation",
+            "target": 55,
+            "xp": 200,
+            "color": "#c4a0d8",
+            "icon_path": '<path d="M6,10 Q14,6 22,10" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M6,14 Q14,18 22,14" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M6,10 L6,14 M22,10 L22,14" stroke="white" stroke-width="1.5"/>',
+        },
+        4: {
+            "type": "News Anchor",
+            "day":  "Friday",
+            "description": "Read this as a professional news presenter. Calm, measured, authoritative. Pause naturally at every punctuation mark.",
+            "text": "Good evening. Researchers have announced a significant breakthrough in speech therapy technology. The new system uses artificial intelligence to provide real-time feedback to patients. Experts say this could transform how millions of people receive treatment worldwide.",
+            "tip_type": "pacing",
+            "target": 68,
+            "xp": 175,
+            "color": "#80c8a8",
+            "icon_path": '<rect x="6" y="8" width="16" height="12" rx="2" fill="none" stroke="white" stroke-width="2"/><circle cx="14" cy="14" r="3" fill="white" opacity="0.80"/><line x1="14" y1="8" x2="14" y2="6" stroke="white" stroke-width="1.5"/><line x1="14" y1="20" x2="14" y2="22" stroke="white" stroke-width="1.5"/>',
+        },
+        5: {
+            "type": "Free Flow Saturday",
+            "day":  "Saturday",
+            "description": "Speak freely for at least 30 seconds about the best thing that happened to you this week. No script. No pressure. Just natural conversation.",
+            "text": "Speak freely about the best thing that happened to you this week. Aim for at least 30 seconds of natural continuous speech.",
+            "tip_type": "confidence",
+            "target": 58,
+            "xp": 200,
+            "color": "#e8c060",
+            "icon_path": '<path d="M8,14 C8,8 20,8 20,14 C20,20 8,20 8,14Z" fill="none" stroke="white" stroke-width="2"/><path d="M11,12 Q14,16 17,12" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round"/>',
+        },
+        6: {
+            "type": "Reflection Sunday",
+            "day":  "Sunday",
+            "description": "Read the baseline sentence — the same one you recorded on your very first day. Notice how different it feels now. This is your progress.",
+            "text": "When I get up in the morning I usually make myself a cup of tea and read the news for a little while before getting ready for the day.",
+            "tip_type": "breathing",
+            "target": 70,
+            "xp": 125,
+            "color": "#b094d4",
+            "icon_path": '<circle cx="14" cy="14" r="8" fill="none" stroke="white" stroke-width="2"/><polyline points="14,10 14,14 17,16" stroke="white" stroke-width="2" stroke-linecap="round"/>',
+        },
+    }
+    return challenges[day]
+
+def _get_total_xp() -> int:
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return 0
+    ex_states = st.session_state.get("ex_states", {})
+    exercise_xp = sum(
+        100 for s in ex_states.values()
+        if isinstance(s, dict) and s.get("completed")
+    )
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(xp_earned),0) "
+                "FROM challenges WHERE user_id=?",
+                (user_id,)
+            ).fetchone()
+        challenge_xp = row[0] if row else 0
+    except Exception:
+        challenge_xp = 0
+    return exercise_xp + challenge_xp
+
+def _already_completed_today() -> bool:
+    from datetime import date
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return False
+    today = str(date.today())
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT id FROM challenges 
+               WHERE user_id=? 
+               AND challenge_date=? 
+               AND completed=1""",
+            (user_id, today)
+        ).fetchone()
+    return row is not None
+
+def _get_or_create_handle(user_id: int, 
+                           username: str) -> str:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT handle FROM anon_handles "
+            "WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+        if row:
+            return row[0]
+        adjectives = [
+            "Swift","Calm","Bold","Clear","Bright",
+            "Gentle","Steady","Fluid","Smooth","Warm",
+            "Keen","Kind","Wise","Pure","Strong"
+        ]
+        animals = [
+            "Fox","Owl","Hawk","Wolf","Bear",
+            "Deer","Swan","Lark","Wren","Crane",
+            "Finch","Dove","Lynx","Hare","Seal"
+        ]
+        import random, hashlib
+        seed = int(hashlib.md5(
+            username.encode()).hexdigest(), 16)
+        random.seed(seed)
+        adj    = random.choice(adjectives)
+        animal = random.choice(animals)
+        number = (seed % 90) + 10
+        handle = f"{adj}{animal}{number}"
+        conn.execute(
+            "INSERT OR IGNORE INTO anon_handles "
+            "(user_id, handle) VALUES (?,?)",
+            (user_id, handle)
+        )
+        return handle
+
+def _get_leaderboard(period: str="all") -> list:
+    with _db() as conn:
+        users = conn.execute(
+            "SELECT id, username FROM users"
+        ).fetchall()
+        result = []
+        for uid, uname in users:
+            handle = _get_or_create_handle(uid, uname)
+            prog = conn.execute(
+                "SELECT ex_states FROM progress "
+                "WHERE user_id=?",
+                (uid,)
+            ).fetchone()
+            ex_xp = 0
+            completed = 0
+            if prog and prog[0]:
+                import json
+                states = json.loads(prog[0])
+                completed = sum(
+                    1 for s in states.values()
+                    if isinstance(s, dict)
+                    and s.get("completed")
+                )
+                ex_xp = completed * 100
+            if period == "week":
+                from datetime import date, timedelta
+                week_ago = str(
+                    date.today() - timedelta(days=7))
+                ch_row = conn.execute(
+                    "SELECT COALESCE(SUM(xp_earned),0) "
+                    "FROM challenges "
+                    "WHERE user_id=? "
+                    "AND challenge_date>=?",
+                    (uid, week_ago)
+                ).fetchone()
+            else:
+                ch_row = conn.execute(
+                    "SELECT COALESCE(SUM(xp_earned),0) "
+                    "FROM challenges WHERE user_id=?",
+                    (uid,)
+                ).fetchone()
+            ch_xp = ch_row[0] if ch_row else 0
+            total = ex_xp + ch_xp
+            streak_row = conn.execute(
+                "SELECT updated_at FROM progress "
+                "WHERE user_id=?",
+                (uid,)
+            ).fetchone()
+            streak = 1 if streak_row else 0
+            result.append({
+                "user_id":   uid,
+                "handle":    handle,
+                "xp":        total,
+                "completed": completed,
+                "streak":    streak,
+            })
+        result.sort(key=lambda x: x["xp"], 
+                    reverse=True)
+        for i, r in enumerate(result):
+            r["rank"] = i + 1
+        return result
 
 
 def _clarity_color(score: float) -> str:
@@ -829,6 +1123,7 @@ def _init_state():
             for i in range(len(EXERCISES))
         },
         "sidebar_visible": True,  # Sidebar visibility state
+        "chat_history": [],      # Coach chat history
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1814,6 +2109,78 @@ label {
     [data-testid="stSidebarCollapseButton"] span {
         display: none !important;
     }
+
+    /* Coach chat UI */
+    .chat-bubble-user {
+        background: linear-gradient(135deg,
+            rgba(196,112,58,0.70),
+            rgba(232,160,96,0.80)) !important;
+        border-radius: 20px 20px 4px 20px !important;
+        padding: 14px 18px !important;
+        margin: 8px 0 8px 20% !important;
+        color: white !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        line-height: 1.65 !important;
+        box-shadow:
+            0 4px 12px rgba(196,112,58,0.30),
+            0 1px 0 rgba(255,255,255,0.20) inset !important;
+    }
+    .chat-bubble-ai {
+        background: rgba(255,255,255,0.42) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border-radius: 20px 20px 20px 4px !important;
+        padding: 14px 18px !important;
+        margin: 8px 20% 8px 0 !important;
+        color: #2d1a0e !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        line-height: 1.75 !important;
+        border: 1.5px solid rgba(255,255,255,0.65) !important;
+        box-shadow:
+            0 4px 16px rgba(120,60,20,0.12),
+            0 1px 0 rgba(255,255,255,0.75) inset !important;
+    }
+    .chat-avatar-ai {
+        width: 42px !important;
+        height: 42px !important;
+        border-radius: 50% !important;
+        background: linear-gradient(135deg,#b094d4,#80bcd8) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: 2px solid rgba(255,255,255,0.70) !important;
+        box-shadow: 0 4px 14px rgba(176,148,212,0.40) !important;
+        flex-shrink: 0 !important;
+    }
+    .chat-avatar-user {
+        width: 42px !important;
+        height: 42px !important;
+        border-radius: 50% !important;
+        background: linear-gradient(135deg,#c4703a,#e8a060) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: 2px solid rgba(255,255,255,0.70) !important;
+        box-shadow: 0 4px 14px rgba(196,112,58,0.40) !important;
+        flex-shrink: 0 !important;
+    }
+    @keyframes typingPulse {
+        0%,100% { opacity: 0.3; transform: scale(0.85); }
+        50%      { opacity: 1.0; transform: scale(1.15); }
+    }
+    .typing-dot {
+        width: 8px !important;
+        height: 8px !important;
+        border-radius: 50% !important;
+        background: #b094d4 !important;
+        display: inline-block !important;
+        margin: 0 2px !important;
+        animation: typingPulse 1.2s ease-in-out infinite !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2474,12 +2841,16 @@ def page_home():
     # ── Record baseline ────────────────────────────────────────────────────
     st.subheader("Step 1 — Record Your Baseline")
     st.markdown(
-        "Read the sentence below **aloud** at your natural pace. "
-        "This gives the app a starting point to measure your improvement from."
+        "Speak naturally into the microphone for at least **10 seconds**. "
+        "This recording helps the app understand your current speech pattern "
+        "and sets a personal starting point to measure your improvement from."
     )
     st.info(
-        '"When I get up in the morning I usually make myself a cup of tea '
-        'and read the news for a little while before getting ready for the day."'
+        "💡 **Not sure what to say?** Try any of these:\n\n"
+        "- Introduce yourself — your name, where you're from\n"
+        "- Describe what you did today or yesterday\n"
+        "- Talk about a hobby or something you enjoy\n\n"
+        "Just speak at your own natural, comfortable pace. There is no right or wrong answer."
     )
 
     signal, sr = _recording_section("home_rec")
@@ -2568,6 +2939,7 @@ def _game_level_card(ex, state, target, completed, unlocked, best):
         )
         if st.button("Start Level", key=f"game_{ex_id}", type="primary", use_container_width=True):
             st.session_state.ex_open = ex_id
+            st.session_state.ex_states[ex_id]["unlocked"] = True
             st.rerun()
 
     else:
@@ -2803,14 +3175,27 @@ def page_exercise_detail(ex_id: int):
                 # Next Exercise button
                 if next_id < len(EXERCISES):
                     st.divider()
-                    if st.button(
-                        f"Next: {EXERCISES[next_id]['title']} →",
-                        type="primary",
-                        use_container_width=True,
-                        key=f"next_ex_{ex_id}",
-                    ):
-                        st.session_state.ex_open = next_id
-                        st.rerun()
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button(
+                            "Back to All Levels",
+                            use_container_width=True,
+                            key=f"back_{ex_id}",
+                        ):
+                            st.session_state.ex_open = None
+                            st.rerun()
+                    with c2:
+                        next_title = EXERCISES[next_id]['title'].split(':')[-1].strip()
+                        if st.button(
+                            f"Next: {next_title} →",
+                            type="primary",
+                            use_container_width=True,
+                            key=f"next_ex_{ex_id}",
+                        ):
+                            st.session_state.ex_states[next_id]["unlocked"] = True
+                            st.session_state.ex_open = next_id
+                            _save_progress()
+                            st.rerun()
 
             else:
                 needed = _ex_target(ex_id) - clarity
@@ -3275,6 +3660,1208 @@ def page_login():
                     st.error(msg)
 
 
+
+
+def page_coach():
+    """Dr. Clara — rule-based guide, comforter, and speech coach. No API needed."""
+
+    st.markdown(
+        '<div style="background:linear-gradient(135deg,rgba(176,148,212,0.45),rgba(144,188,212,0.45));backdrop-filter:blur(22px);border-radius:24px;padding:28px 32px;margin-bottom:20px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 10px 40px rgba(150,120,200,0.22),0 1px 0 rgba(255,255,255,0.75) inset;">'
+        '<div style="display:flex;align-items:center;gap:20px;">'
+        '<div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#b094d4,#80bcd8);border:3px solid rgba(255,255,255,0.75);box-shadow:0 8px 28px rgba(176,148,212,0.50);display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+        '<svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="12" r="8" fill="rgba(255,255,255,0.90)"/><path d="M4,34 C4,24 32,24 32,34" fill="rgba(255,255,255,0.90)"/><circle cx="12" cy="11" r="2" fill="#b094d4"/><circle cx="24" cy="11" r="2" fill="#b094d4"/><path d="M13,16 Q18,20 23,16" fill="none" stroke="#b094d4" stroke-width="1.5" stroke-linecap="round"/></svg>'
+        '</div>'
+        '<div>'
+        '<div style="font-size:11px;font-weight:800;letter-spacing:3px;color:rgba(90,53,32,0.80);text-transform:uppercase;margin-bottom:4px;">Your Personal Guide</div>'
+        '<div style="font-size:26px;font-weight:900;font-family:Playfair Display,serif;color:#2d1a0e;line-height:1.1;margin-bottom:6px;">Dr. Clara</div>'
+        '<div style="font-size:13px;font-weight:500;color:#5a3520;line-height:1.6;">I am here to guide you through this app, support you emotionally, and help you improve your fluency — one step at a time.</div>'
+        '</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Gather user context ──
+    bl        = st.session_state.get("baseline")
+    ex_states = st.session_state.get("ex_states", {})
+    uname     = st.session_state.get("username", "friend")
+    mood_logs = _load_mood_logs()
+
+    completed_exercises = [
+        EXERCISES[i]["title"]
+        for i, s in ex_states.items()
+        if isinstance(s, dict) and s.get("completed")
+    ]
+    struggling = [
+        (EXERCISES[i], s)
+        for i, s in ex_states.items()
+        if isinstance(s, dict)
+        and s.get("attempts", 0) > 0
+        and not s.get("completed")
+        and s.get("best_score") is not None
+    ]
+    baseline_clarity = bl["clarity"] if bl else None
+    pause_events     = bl["result"].get("pause_events", 0) if bl else 0
+    prolong_events   = bl["result"].get("prolongation_events", 0) if bl else 0
+    rep_events       = bl["result"].get("repetition_events", 0) if bl else 0
+    avg_stress = (
+        round(sum(l["stress"] for l in mood_logs) / len(mood_logs), 1)
+        if mood_logs else None
+    )
+    total_attempts = sum(
+        s.get("attempts", 0) for s in ex_states.values()
+        if isinstance(s, dict)
+    )
+
+    def _dominant_stutter():
+        counts = {"pauses": pause_events, "prolongations": prolong_events, "repetitions": rep_events}
+        return max(counts, key=counts.get)
+
+    def _clara_reply(question: str) -> str:
+        q = question.lower().strip()
+
+        # ────────────────────────────────────────────
+        # 1. GREETINGS & EMOTIONAL CHECK-IN
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["hello", "hi", "hey", "good morning", "good evening", "good afternoon", "howdy"]):
+            if baseline_clarity is None:
+                return (
+                    f"Hello {uname}! 😊 I am so glad you are here. Starting something new takes courage, "
+                    "and you have already taken the first step by opening this app.\\n\\n"
+                    "I am Dr. Clara — think of me as your guide, supporter, and speech coach all in one. "
+                    "I will help you understand every part of this app and cheer you on every step of the way.\\n\\n"
+                    "To get started, head to the **Home** page and record your baseline speech. "
+                    "It only takes about 10 seconds of talking — just speak naturally. There is no test, no judgment. "
+                    "Once that is done, I can give you a fully personalised plan. You've got this! 💜"
+                )
+            best_scores = [s.get("best_score") for s in ex_states.values() if s.get("best_score")]
+            best = max(best_scores) if best_scores else None
+            if len(completed_exercises) == 0:
+                return (
+                    f"Welcome back, {uname}! 😊 Your baseline clarity is **{baseline_clarity}%** — that is your personal starting point. "
+                    "Every journey begins somewhere, and you have already begun.\\n\\n"
+                    "Head to the **Exercises** and start with Level 1 — Warm-Up: Smooth Airflow. "
+                    "It is designed to feel comfortable and build your confidence right away. "
+                    "I will be here whenever you need me! 💜"
+                )
+            return (
+                f"Hello {uname}! 😊 You have completed **{len(completed_exercises)}** exercise(s) "
+                f"and your best score so far is **{best}%**. That is something to be proud of.\\n\\n"
+                "Keep going — every attempt makes your brain more comfortable with fluent speech patterns. "
+                "What can I help you with today?"
+            )
+
+        # ────────────────────────────────────────────
+        # 2. EMOTIONAL SUPPORT
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["frustrated", "sad", "depressed", "hopeless", "give up", "cant do", "can't do", "difficult", "hard", "struggling", "demotivated", "discouraged", "embarrassed", "ashamed"]):
+            return (
+                f"I hear you, {uname}, and I want you to know — what you are feeling is completely valid. 💜\\n\\n"
+                "Stuttering is not a flaw or a weakness. It is a neurological difference, and millions of people around the world share your experience. "
+                "Some of the most accomplished speakers, leaders, and creatives in history have stuttered.\\n\\n"
+                "Progress in speech therapy is rarely a straight line. Some days feel harder than others, and that is okay. "
+                "What matters most is that you showed up today — and that alone is enough.\\n\\n"
+                "Take a deep breath. You do not need to be perfect. You just need to keep going, one small step at a time. "
+                "I am right here with you. 💜"
+            )
+
+        if any(w in q for w in ["scared", "nervous", "anxious", "fear", "afraid", "worry", "worried"]):
+            return (
+                f"It is completely natural to feel nervous about this, {uname}. 💜 "
+                "Speaking can feel vulnerable — especially when you have experienced moments of stuttering in public.\\n\\n"
+                "Here is something important to remember: the people who care about you are listening to *what* you say, not *how* you say it. "
+                "Your words matter. Your voice matters.\\n\\n"
+                "This app is your safe space — no one is judging you here. Every recording you make is private, just for you. "
+                "Start with the exercises in a quiet place where you feel comfortable, and build from there.\\n\\n"
+                "Tip: Before any speaking task, try box breathing — inhale for 4 counts, hold for 4, exhale for 4. "
+                "It calms your nervous system and relaxes your vocal tract. You are safe here. 💜"
+            )
+
+        if any(w in q for w in ["tired", "exhausted", "burnt out", "overwhelmed", "too much"]):
+            return (
+                f"It sounds like you need a rest, {uname}, and that is completely okay. 💜\\n\\n"
+                "Speech therapy is a marathon, not a sprint. Pushing yourself when you are exhausted can actually increase tension and make stuttering worse. "
+                "The kindest thing you can do for yourself right now is rest.\\n\\n"
+                "Take a day off from exercises. Log your mood in the **Mood Tracker** — keeping track of how you feel helps us spot patterns together. "
+                "Come back tomorrow refreshed. Your progress will still be here waiting for you. 💜"
+            )
+
+        if any(w in q for w in ["happy", "great", "amazing", "excited", "proud", "did it", "passed", "completed", "won", "success"]):
+            return (
+                f"That is WONDERFUL, {uname}! 🎉💜 I am so proud of you!\\n\\n"
+                "Every win — no matter how small it seems — is your brain building new speech pathways. "
+                "You are literally rewiring yourself for fluency. That takes real courage and real effort.\\n\\n"
+                "Celebrate this moment. Tell someone you trust. "
+                "And then, when you are ready, head to the **Exercises** and take on the next level. "
+                "You have proven you can do it. 🌟"
+            )
+
+        # ────────────────────────────────────────────
+        # 3. APP NAVIGATION & USAGE HELP
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["how do i use", "how to use", "navigate", "where is", "how to", "what is", "explain", "app help", "tutorial", "guide"]):
+            return (
+                f"I would love to show you around, {uname}! 😊\\n\\n"
+                "**Home** — Record your baseline speech (10+ seconds of natural talking). This gives us your starting clarity score.\\n\\n"
+                "**Exercises** — 14 carefully designed levels that build fluency step by step. Start with Level 1 and work through them in order.\\n\\n"
+                "**Progress** — See your scores over time, track improvement, and celebrate your wins.\\n\\n"
+                "**Mood** — Log how you feel daily. Stress affects speech, and tracking helps us see patterns.\\n\\n"
+                "**Shadowing** — Practice speaking along with clear audio. It helps your brain learn fluent rhythm.\\n\\n"
+                "**Challenge** — A fun daily task to keep you motivated.\\n\\n"
+                "**Ranks** — See how you compare with others (optional and anonymous).\\n\\n"
+                "Start wherever feels right, and I will always be here to help! 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 4. SPECIFIC FEATURE GUIDANCE
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["shadowing", "choral", "shadow"]):
+            return (
+                f"Great question, {uname}! Choral Shadowing is one of the most powerful fluency techniques. 💜\\n\\n"
+                "**How it works:** You speak together with a clear audio recording. When you speak in unison with someone else, "
+                "your brain borrows their fluent speech pattern — it is like a temporary fluency crutch.\\n\\n"
+                "**Why it helps:** It reduces the fear of speaking alone, gives you a steady rhythm to follow, "
+                "and trains your vocal muscles to move smoothly.\\n\\n"
+                "**How to use it:** Go to the **Shadowing** page, choose a text, and try to speak along with the audio. "
+                "Do not worry about perfect sync — just stay close and keep going.\\n\\n"
+                "Start with shorter texts and build up. Many people see immediate improvement! 🌟"
+            )
+
+        if any(w in q for w in ["challenge", "daily challenge", "daily"]):
+            return (
+                f"The Daily Challenge is your fun motivation boost, {uname}! 😊\\n\\n"
+                "Each day you get a small, achievable speaking task designed to keep you practicing consistently. "
+                "It might be reading a short paragraph, describing a picture, or trying a specific technique.\\n\\n"
+                "Why it works: Consistency beats intensity. A little practice every day builds lasting habits better than cramming.\\n\\n"
+                "Complete challenges to earn streaks and build confidence. Even on busy days, the challenge only takes 2-3 minutes.\\n\\n"
+                "Ready to try today's challenge? Head to the **Challenge** page! 💪"
+            )
+
+        if any(w in q for w in ["mood", "stress", "feelings", "emotion", "tracker"]):
+            return (
+                f"The Mood Tracker is really important, {uname}. 💜\\n\\n"
+                "Stress and emotions directly affect your speech — when we are stressed, our vocal cords tighten, "
+                "making stuttering more likely. The Mood Tracker helps us see these patterns.\\n\\n"
+                "**How to use it:** Each day, rate your stress level (1-10) and optionally add a note about how you are feeling. "
+                "Over time, we can see connections between your stress levels and your speech performance.\\n\\n"
+                "**What we learn:** Are certain situations more stressful? Do high-stress days correlate with more stuttering? "
+                "This insight helps us develop better coping strategies.\\n\\n"
+                "Be honest — there is no judgment here. Understanding your patterns is the first step to managing them. 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 5. PROGRESS & PERFORMANCE ANALYSIS
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["progress", "how am i doing", "improving", "getting better", "performance", "score"]):
+            if baseline_clarity is None:
+                return (
+                    f"Let us get you started, {uname}! 😊\\n\\n"
+                    "To track your progress, we need your baseline score first. "
+                    "Head to the **Home** page and record 10+ seconds of natural speech. "
+                    "That gives us your starting clarity percentage.\\n\\n"
+                    "Once that is done, I can show you detailed progress charts, improvement trends, and celebrate your wins with you! "
+                    "Every journey begins with that first step. 💜"
+                )
+            if len(completed_exercises) == 0:
+                return (
+                    f"You have taken the first step, {uname}! Your baseline clarity is **{baseline_clarity}%**. 🌟\\n\\n"
+                    "Now the real progress begins. As you complete exercises, you will see your scores improve. "
+                    "Most people see noticeable improvement within 2-3 weeks of consistent practice.\\n\\n"
+                    "Head to the **Exercises** page and start with Level 1. I will be cheering you on every step of the way! "
+                    "Progress is not always linear, but it will come. 💜"
+                )
+            best_scores = [s.get("best_score") for s in ex_states.values() if s.get("best_score")]
+            best = max(best_scores) if best_scores else None
+            return (
+                f"You are doing great, {uname}! 🌟\\n\\n"
+                f"**Your journey:** Started at **{baseline_clarity}%** clarity, best so far is **{best}%**\\n\\n"
+                f"**Completed:** {len(completed_exercises)} of {len(EXERCISES)} exercises\\n\\n"
+                f"**Total attempts:** {total_attempts} — every attempt builds neural pathways!\\n\\n"
+                "Remember: Progress is not just about scores. Every time you practice, you are training your brain. "
+                "Some days feel harder, but that does not mean you are not improving. Keep going! 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 6. EXERCISE-SPECIFIC COACHING
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["what should i practice", "what exercise", "which exercise", "practice today", "next", "recommend"]):
+            if baseline_clarity is None:
+                return (
+                    f"Great question, {uname}! 😊\\n\\n"
+                    "Before I can recommend specific exercises, let us get your baseline score. "
+                    "Go to the **Home** page and record 10+ seconds of natural speech.\\n\\n"
+                    "This tells me your starting point, so I can suggest the perfect exercises for your unique needs. "
+                    "Everyone is different, and personalization is key to effective practice! 💜"
+                )
+            if len(completed_exercises) == 0:
+                return (
+                    f"Perfect place to start, {uname}! 😊\\n\\n"
+                    "Based on your baseline clarity of **{baseline_clarity}%**, I recommend:\\n\\n"
+                    "**Level 1 — Warm-Up: Smooth Airflow**\\n"
+                    "This exercise teaches gentle, steady breathing — the foundation of fluent speech. "
+                    "It feels calming and builds confidence right away.\\n\\n"
+                    "Go to the **Exercises** page and start there. It is designed to be comfortable and achievable. "
+                    "I will be here to guide you through each level! 💜"
+                )
+            if struggling:
+                next_ex, state = struggling[0]
+                target = _ex_target(next_ex["id"])
+                best = state.get("best_score", 0)
+                return (
+                    f"I see you are working on **{next_ex['title']}**, {uname}. 💜\\n\\n"
+                    f"Your best score so far: **{best}%** (target: {target}%)\\n\\n"
+                    f"This exercise focuses on: {next_ex['focus']}\\n\\n"
+                    "Do not be discouraged — struggling with an exercise means you are challenging yourself in exactly the right way. "
+                    f"Keep practicing this level. Each attempt builds muscle memory.\\n\\n"
+                    "**Tip:** Review the exercise instructions carefully, try it slower first, and remember that progress comes from consistent practice, not perfection. 💜"
+                )
+            next_idx = len(completed_exercises)
+            if next_idx < len(EXERCISES):
+                next_ex = EXERCISES[next_idx]
+                return (
+                    f"Excellent progress, {uname}! 🌟\\n\\n"
+                    f"You are ready for **Level {next_idx + 1} — {next_ex['title']}**\\n\\n"
+                    f"This exercise builds on your previous work and focuses on: {next_ex['focus']}\\n\\n"
+                    f"Target score: {_ex_target(next_idx)}%\\n\\n"
+                    "Each level carefully builds on the last. Take your time, read the instructions, and remember that "
+                    "struggling is part of learning. You have got this! 💜"
+                )
+            return (
+                f"Incredible, {uname}! 🎉 You have completed all exercises!\\n\\n"
+                "Now is the perfect time to:\\n"
+                "• Review any exercises that felt challenging\\n"
+                "• Use the Shadowing feature to maintain fluency\\n"
+                "• Try the Daily Challenge for fun practice\\n"
+                "• Focus on real-world speaking situations\\n\\n"
+                "Maintenance is key — keep practicing to keep your skills sharp! 💜"
+            )
+
+        if any(w in q for w in ["why am i failing", "why cant i pass", "stuck", "difficult", "hard", "keep failing"]):
+            if not struggling:
+                return (
+                    f"You are not failing, {uname} — you are learning! 💜\\n\\n"
+                    "Every attempt, whether you pass or not, strengthens the neural pathways for fluent speech. "
+                    "Think of it like training a muscle — some days are harder, but every practice session counts.\\n\\n"
+                    "If you are feeling stuck, try:\\n"
+                    "• Slowing down and focusing on technique\\n"
+                    "• Reviewing the exercise instructions\\n"
+                    "• Taking a break and coming back fresh\\n"
+                    "• Remembering that progress is not always linear\\n\\n"
+                    "You are building lasting skills. Keep going! 💜"
+                )
+            ex, state = struggling[0]
+            target = _ex_target(ex["id"])
+            best = state.get("best_score", 0)
+            attempts = state.get("attempts", 0)
+            
+            # Analyze why they might be struggling
+            reasons = []
+            if baseline_clarity and baseline_clarity < 70:
+                reasons.append("Your baseline clarity suggests we need to focus on foundational techniques")
+            if attempts > 5 and best < target * 0.8:
+                reasons.append("Multiple attempts tell me this exercise is genuinely challenging for you")
+            if pause_events > prolong_events and pause_events > rep_events:
+                reasons.append("Your stutter pattern shows more pauses — let us work on steady airflow")
+            elif prolong_events > pause_events and prolong_events > rep_events:
+                reasons.append("Your pattern shows more prolongations — gentle onset is key")
+            elif rep_events > pause_events and rep_events > prolong_events:
+                reasons.append("Your pattern shows more repetitions — light contacts will help")
+            
+            reason_text = reasons[0] if reasons else "This level is designed to challenge you"
+            
+            return (
+                f"You are not failing, {uname} — you are learning exactly what you need to work on! 💜\\n\\n"
+                f"**{ex['title']}** (attempts: {attempts}, best: {best}%)\\n\\n"
+                f"{reason_text}. This is valuable information!\\n\\n"
+                f"**Focus:** {ex['focus']}\\n\\n"
+                "**Try this approach:**\\n"
+                "• Read the instructions again — sometimes we miss a key detail\\n"
+                "• Go slower than you think you need to\\n"
+                "• Focus on the technique, not just passing\\n"
+                "• Take a break if you are feeling tense\\n\\n"
+                "This exercise is teaching you exactly what you need to improve. You are on the right track! 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 7. STUTTERING TECHNIQUES & STRATEGIES
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["reduce", "stop", "fix", "eliminate", "get rid of"]):
+            if "repetition" in q or "repetitions" in q:
+                return (
+                    f"Great question about repetitions, {uname}! 💜\\n\\n"
+                    "Repetitions happen when your speech system gets 'stuck' trying to say a sound. "
+                    "The key is reducing tension and making lighter contacts.\\n\\n"
+                    "**Techniques that help:**\\n"
+                    "• **Light contacts** — touch your tongue/lips gently instead of pressing hard\\n"
+                    "• **Easy onset** — start sounds with a gentle breath, not a sudden push\\n"
+                    "• **Pausing** — brief pauses between phrases give your system time to reset\\n\\n"
+                    "**Exercise focus:** Levels 2-4 specifically target repetition reduction. "
+                    "Practice them slowly and consistently. Remember: You are unlearning old habits, which takes patience. 💜"
+                )
+            if "pause" in q or "pauses" in q:
+                return (
+                    f"Pauses can feel frustrating, {uname}, but we can work with them! 💜\\n\\n"
+                    "Pauses often happen when airflow stops or your vocal cords freeze momentarily. "
+                    "The solution is maintaining steady, gentle airflow.\\n\\n"
+                    "**Key techniques:**\\n"
+                    "• **Diaphragmatic breathing** — breathe from your belly, not chest\\n"
+                    "• **Continuous airflow** — keep a gentle stream of air going between words\\n"
+                    "• **Gentle onset** — start words with breath, not muscle tension\\n\\n"
+                    "**Exercise focus:** Level 1 (Smooth Airflow) is perfect for this. "
+                    "Practice it daily until steady breathing becomes automatic. 💜"
+                )
+            if "prolongation" in q or "prolongations" in q:
+                return (
+                    f"Let us work on prolongations together, {uname}! 💜\\n\\n"
+                    "Prolongations happen when sounds get stretched out. This usually comes from too much muscle tension "
+                    "in your tongue, lips, or jaw.\\n\\n"
+                    "**What helps:**\\n"
+                    "• **Relaxation** — consciously release tension in your speech muscles\\n"
+                    "• **Light contacts** — minimal pressure when articulating\\n"
+                    "• **Moving forward** — once a sound starts, keep the flow moving\\n\\n"
+                    "**Exercise focus:** Levels 3-5 address prolongation directly. "
+                    "Practice slowly, focusing on relaxed articulation. You can do this! 💜"
+                )
+            # General response
+            return (
+                f"I want to help you with that, {uname}! 💜\\n\\n"
+                "The key to reducing stuttering is not 'fighting' it, but learning new, more fluent speech patterns. "
+                "Think of it as upgrading your system rather than fixing something broken.\\n\\n"
+                "**Core principles:**\\n"
+                "• **Gentle breathing** from your diaphragm\\n"
+                "• **Light contacts** between speech articulators\\n"
+                "• **Steady rhythm** and pace\\n"
+                "• **Reduced tension** in speech muscles\\n\\n"
+                "The exercises in this app are designed to build these skills step by step. "
+                "Start with Level 1 and progress through them systematically. Each level builds on the last! 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 8. CLARITY SCORE EXPLANATION
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["clarity score", "what is clarity", "score", "percentage", "what does", "mean"]):
+            if baseline_clarity is None:
+                return (
+                    f"Great question, {uname}! 😊\\n\\n"
+                    "The **clarity score** measures how fluent your speech is. It is a percentage from 0-100%, "
+                    "where higher numbers mean clearer, more fluent speech.\\n\\n"
+                    "The score analyzes:\\n"
+                    "• **Pauses** — moments when speech stops unexpectedly\\n"
+                    "• **Prolongations** — sounds that get stretched out\\n"
+                    "• **Repetitions** — repeating sounds or words\\n\\n"
+                    "To get your personal baseline score, go to the **Home** page and record 10+ seconds of natural speech. "
+                    "This gives us your starting point, and we can track improvement from there! 💜"
+                )
+            return (
+                f"Your clarity score tells us about your speech fluency, {uname}! 💜\\n\\n"
+                f"**Your baseline:** {baseline_clarity}%\\n\\n"
+                "The score analyzes three types of disfluency:\\n"
+                f"• **Pauses:** {pause_events} in your baseline (unexpected stops)\\n"
+                f"• **Prolongations:** {prolong_events} (stretched sounds)\\n"
+                f"• **Repetitions:** {rep_events} (repeated sounds/words)\\n\\n"
+                f"**Your pattern:** {_dominant_stutter()} are most common for you\\n\\n"
+                "As you practice the exercises, these numbers should decrease and your clarity percentage should increase. "
+                "Most people see 10-20% improvement in the first few weeks! 🌟"
+            )
+
+        # ────────────────────────────────────────────
+        # 9. PRACTICE PLANS & SCHEDULING
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["plan", "schedule", "routine", "when", "how often", "daily", "week"]):
+            if "7 day" in q or "week" in q:
+                return (
+                    f"Here is your personalized 7-day plan, {uname}! 💜\\n\\n"
+                    "**Day 1-2:** Focus on Level 1 (Smooth Airflow) — 10 minutes, twice daily\\n"
+                    "**Day 3-4:** Add Level 2 (Gentle Onset) — alternate between 1 and 2\\n"
+                    "**Day 5-6:** Practice your current challenge level — 15 minutes daily\\n"
+                    "**Day 7:** Review and Shadowing — practice any challenging exercises + 10 min shadowing\\n\\n"
+                    "**Daily habits:**\\n"
+                    "• Check in with your mood/stress level\\n"
+                    "• Try the Daily Challenge (2-3 minutes)\\n"
+                    "• Use easy onset in real conversations\\n\\n"
+                    "Consistency beats intensity! Even 10 minutes daily creates lasting change. You have got this! 💜"
+                )
+            return (
+                f"Great planning mindset, {uname}! 😊\\n\\n"
+                "**For best results, aim for:**\\n"
+                "• **10-15 minutes daily** of focused practice\\n"
+                "• **Twice daily** if possible (morning and evening)\\n"
+                "• **Consistent timing** — same time each day builds habits\\n\\n"
+                "**Sample routine:**\\n"
+                "• 2-3 minutes: Daily Challenge\\n"
+                "• 5-7 minutes: Current exercise level\\n"
+                "• 3-5 minutes: Review or Shadowing\\n\\n"
+                "**Key tip:** Practice when you are relatively relaxed. Stressful practice can reinforce tension. "
+                "Listen to your body and adjust as needed! 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 10. PERSONAL IDENTITY & ABOUT DR. CLARA
+        # ────────────────────────────────────────────
+        if any(w in q for w in ["who are you", "what are you", "about you", "tell me about yourself", "are you real", "are you ai"]):
+            return (
+                "I am Dr. Clara — your built-in speech therapy guide and supporter. 😊\\n\\n"
+                "I am not a real person, but I am built with genuine care for your journey. "
+                "I use your actual data from this app — your baseline score, exercise history, mood logs, and stutter patterns — "
+                "to give you personalised advice that is specific to *you*, not generic.\\n\\n"
+                "I can help you:\\n"
+                "• Understand and navigate every part of this app\\n"
+                "• Get personalised coaching based on your real results\\n"
+                "• Feel supported and encouraged on difficult days\\n"
+                "• Learn evidence-based speech therapy techniques\\n\\n"
+                "I am always here, always patient, and always on your side. 💜"
+            )
+
+        # ────────────────────────────────────────────
+        # 11. DEFAULT — helpful and warm
+        # ────────────────────────────────────────────
+        if baseline_clarity is None:
+            return (
+                f"I am not sure I understood that exactly, {uname}, but I am here to help! 😊\\n\\n"
+                "Since you have not recorded your baseline yet, the best first step is to go to the **Home** page "
+                "and speak naturally for 10+ seconds. That gives me your starting point.\\n\\n"
+                "You can also ask me things like:\\n"
+                "• *'How do I use this app?'*\\n"
+                "• *'What is a clarity score?'*\\n"
+                "• *'I am feeling nervous'*\\n"
+                "• *'How do I reduce repetitions?'*\\n\\n"
+                "I am right here with you. 💜"
+            )
+        return (
+            f"I am not sure I understood that fully, {uname}, but I am here! 😊\\n\\n"
+            "Try asking me something like:\\n"
+            "• *'How is my progress?'*\\n"
+            "• *'Why am I failing my exercise?'*\\n"
+            "• *'What should I practice today?'*\\n"
+            "• *'How do I reduce repetitions?'*\\n"
+            "• *'I am feeling discouraged'*\\n"
+            "• *'How do I use the Shadowing page?'*\\n\\n"
+            "I am always here, and I am rooting for you. 💜"
+        )
+
+    # ── Quick question buttons ──
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;letter-spacing:2px;color:#7a5540;text-transform:uppercase;margin-bottom:10px;">Quick Questions</div>',
+        unsafe_allow_html=True
+    )
+
+    quick_questions = [
+        "How do I use this app?",
+        "How is my progress?",
+        "What should I practice today?",
+        "I am feeling discouraged",
+        "How do I reduce repetitions?",
+        "Give me a 7-day plan",
+        "What is clarity score?",
+        "How does Shadowing work?",
+        "I am nervous about speaking",
+        "Why am I failing my exercise?",
+        "Tell me about the Daily Challenge",
+        "Who are you?",
+    ]
+
+    cols = st.columns(3)
+    for i, q in enumerate(quick_questions):
+        with cols[i % 3]:
+            if st.button(q, key=f"quick_q_{i}", use_container_width=True):
+                st.session_state.chat_history.append({"role": "user", "content": q})
+                st.rerun()
+
+    st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
+
+    # ── Chat display ──
+    if not st.session_state.chat_history:
+        name_display = uname if uname else "there"
+        greeting = (
+            f"Hello {name_display}! 😊 I am Dr. Clara — your personal speech therapy guide and supporter.\\n\\n"
+            "I am here to help you understand this app, cheer you on, and give you personalised coaching based on your real data.\\n\\n"
+            "Use the quick questions above, or type anything below. There is no wrong question. 💜"
+        )
+        greeting_html = greeting.replace("\\n\\n", "<br><br>").replace("**", "")
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.32);backdrop-filter:blur(14px);border-radius:20px;padding:24px 28px;border:1.5px solid rgba(255,255,255,0.55);margin:8px 0;">'
+            f'<div style="display:flex;align-items:flex-start;gap:14px;">'
+            f'<div class="chat-avatar-ai" style="flex-shrink:0;margin-top:4px;"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="7" r="4" fill="rgba(255,255,255,0.90)"/><path d="M2,18 C2,12 18,12 18,18" fill="rgba(255,255,255,0.90)"/><circle cx="7" cy="6" r="1" fill="#b094d4"/><circle cx="13" cy="6" r="1" fill="#b094d4"/><path d="M7,9 Q10,11 13,9" fill="none" stroke="#b094d4" stroke-width="1" stroke-linecap="round"/></svg></div>'
+            f'<div class="chat-bubble-ai" style="margin:0;">{greeting_html}</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        for msg in st.session_state.chat_history:
+            if msg["role"] == "user":
+                st.markdown(
+                    f'<div style="display:flex;justify-content:flex-end;align-items:flex-end;gap:10px;margin:8px 0;">'
+                    f'<div class="chat-bubble-user">{msg["content"]}</div>'
+                    f'<div class="chat-avatar-user"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="7" r="4" fill="rgba(255,255,255,0.90)"/><path d="M2,18 C2,12 18,12 18,18" fill="rgba(255,255,255,0.90)"/></svg></div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            else:
+                reply_html = (msg["content"]
+                    .replace("\\n\\n", "<br><br>")
+                    .replace("\\n", "<br>")
+                    .replace("**", "<strong>", 1))
+                # Bold markdown: replace **text** pairs
+                import re as _re
+                reply_html = _re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', msg["content"].replace("\\n\\n","<br><br>").replace("\\n","<br>"))
+                st.markdown(
+                    f'<div style="display:flex;justify-content:flex-start;align-items:flex-end;gap:10px;margin:8px 0;">'
+                    f'<div class="chat-avatar-ai"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="7" r="4" fill="rgba(255,255,255,0.90)"/><path d="M2,18 C2,12 18,12 18,18" fill="rgba(255,255,255,0.90)"/><circle cx="7" cy="6" r="1" fill="#b094d4"/><circle cx="13" cy="6" r="1" fill="#b094d4"/><path d="M7,9 Q10,11 13,9" fill="none" stroke="#b094d4" stroke-width="1" stroke-linecap="round"/></svg></div>'
+                    f'<div class="chat-bubble-ai">{reply_html}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+    # ── Process pending reply ──
+    last = st.session_state.chat_history[-1] if st.session_state.chat_history else None
+    if last and last["role"] == "user":
+        reply = _clara_reply(last["content"])
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+        st.rerun()
+
+    st.divider()
+
+    # ── Input ──
+    col_input, col_send = st.columns([5, 1])
+    with col_input:
+        user_input = st.text_input(
+            "Message Dr. Clara",
+            placeholder="Ask anything — app help, techniques, how you are feeling...",
+            key="coach_input",
+            label_visibility="collapsed"
+        )
+    with col_send:
+        if st.button("Send", type="primary", use_container_width=True):
+            if user_input.strip():
+                st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
+                st.rerun()
+
+    if st.button("Clear Conversation", use_container_width=True):
+        st.session_state.chat_history = []
+        st.rerun()
+
+
+
+def page_challenge():
+    from datetime import date, timedelta
+
+    challenge = _get_today_challenge()
+    history   = _load_challenge_history()
+    done_today = _already_completed_today()
+    total_xp   = _get_total_xp()
+
+    # ── Page header ──
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,rgba(45,26,14,0.82),rgba(80,40,10,0.88));backdrop-filter:blur(24px);border-radius:28px;padding:28px 36px;margin-bottom:24px;border:1.5px solid rgba(255,180,100,0.40);box-shadow:0 0 40px rgba(196,112,58,0.25),0 0 80px rgba(196,112,58,0.12);position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:-30px;right:-30px;width:160px;height:160px;border-radius:50%;background:radial-gradient(circle,rgba(196,112,58,0.30) 0%,transparent 70%);pointer-events:none;"></div>'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">'
+        f'<div>'
+        f'<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:3px;color:rgba(240,160,96,0.80);text-transform:uppercase;margin-bottom:6px;">Daily Mission</div>'
+        f'<div style="font-size:28px;font-weight:900;font-family:Playfair Display,serif;background:linear-gradient(90deg,#ffe0b0,#ffb870,#ffd090);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;margin-bottom:6px;">{challenge["day"]} Challenge</div>'
+        f'<div style="font-size:14px;font-weight:600;font-family:Plus Jakarta Sans,sans-serif;color:rgba(255,220,180,0.85);">{challenge["type"]}</div>'
+        f'</div>'
+        f'<div style="display:flex;gap:12px;align-items:center;">'
+        f'<div style="background:rgba(255,255,255,0.10);border-radius:18px;padding:14px 20px;text-align:center;border:1px solid rgba(255,180,100,0.30);">'
+        f'<div style="font-size:10px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:rgba(240,160,96,0.80);text-transform:uppercase;">Total XP</div>'
+        f'<div style="font-size:30px;font-weight:900;font-family:Playfair Display,serif;background:linear-gradient(90deg,#ffe0b0,#ffb870);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;">{total_xp}</div>'
+        f'</div>'
+        f'<div style="background:linear-gradient(135deg,{challenge["color"]},{challenge["color"]}aa);border-radius:18px;padding:14px 20px;text-align:center;box-shadow:0 0 24px {challenge["color"]}60;">'
+        f'<div style="font-size:10px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:rgba(255,255,255,0.85);text-transform:uppercase;">Reward</div>'
+        f'<div style="font-size:30px;font-weight:900;font-family:Playfair Display,serif;color:white;line-height:1;">+{challenge["xp"]}</div>'
+        f'<div style="font-size:10px;color:rgba(255,255,255,0.70);font-family:Plus Jakarta Sans,sans-serif;font-weight:700;">XP</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Already completed banner ──
+    if done_today:
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,rgba(112,200,144,0.40),rgba(80,168,112,0.50));backdrop-filter:blur(18px);border-radius:20px;padding:20px 26px;margin-bottom:20px;border:1.5px solid rgba(160,220,160,0.55);box-shadow:0 6px 24px rgba(40,140,80,0.20);">'
+            f'<div style="display:flex;align-items:center;gap:16px;">'
+            f'<div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#70c890,#50a870);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(80,168,112,0.45);flex-shrink:0;">'
+            f'<svg width="26" height="26" viewBox="0 0 26 26"><polyline points="5,13 10,18 21,7" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            f'</div>'
+            f'<div>'
+            f'<div style="font-size:16px;font-weight:800;font-family:Playfair Display,serif;color:#2d1a0e;margin-bottom:4px;">Challenge Complete!</div>'
+            f'<div style="font-size:13px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#3a5a3a;">You completed today\'s challenge. Come back tomorrow for a new mission.</div>'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Challenge card ──
+    st.markdown(
+        f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;margin-bottom:20px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;">'
+        f'<div style="display:flex;align-items:center;gap:16px;margin-bottom:18px;">'
+        f'<div style="width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,{challenge["color"]},{challenge["color"]}aa);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px {challenge["color"]}50;flex-shrink:0;">'
+        f'<svg width="28" height="28" viewBox="0 0 28 28">{challenge["icon_path"]}</svg>'
+        f'</div>'
+        f'<div>'
+        f'<div style="font-size:18px;font-weight:900;font-family:Playfair Display,serif;color:#2d1a0e;margin-bottom:4px;">{challenge["type"]}</div>'
+        f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Target: {challenge["target"]}% clarity</div>'
+        f'</div>'
+        f'</div>'
+        f'<div style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;line-height:1.75;margin-bottom:20px;">{challenge["description"]}</div>'
+        f'<div style="background:rgba(255,255,255,0.42);border-radius:16px;padding:20px 24px;border-left:4px solid {challenge["color"]};border:1.5px solid rgba(255,255,255,0.60);border-left:4px solid {challenge["color"]};font-size:17px;line-height:1.85;color:#2d1a0e;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.75) inset;">'
+        f'{challenge["text"]}'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    if not done_today:
+        st.subheader("Record Your Challenge Attempt")
+        signal, sr = _recording_section("challenge_rec")
+
+        if signal is not None:
+            if st.button(
+                "Submit Challenge Attempt",
+                type="primary",
+                use_container_width=True,
+                key="challenge_submit"
+            ):
+                with st.spinner("Analysing your challenge attempt..."):
+                    result, clarity = _analyze(signal, sr)
+                    result["corrected_signal"] = \
+                        _smooth_corrected_audio(
+                            result["corrected_signal"],
+                            result["sr"]
+                        )
+
+                _score_card(clarity, "Challenge Score")
+                _event_metrics(result)
+
+                xp_earned = challenge["xp"]
+                if clarity >= challenge["target"]:
+                    st.snow()
+                    _save_challenge(
+                        challenge["type"],
+                        clarity,
+                        xp_earned
+                    )
+                    st.markdown(
+                        f'<div style="background:linear-gradient(135deg,rgba(45,26,14,0.85),rgba(80,40,10,0.90));border-radius:24px;padding:28px;text-align:center;border:2px solid rgba(255,180,100,0.60);box-shadow:0 0 40px rgba(196,112,58,0.40);margin:16px 0;">'
+                        f'<div style="font-size:32px;font-weight:900;font-family:Playfair Display,serif;background:linear-gradient(90deg,#ffe0b0,#ffb870);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;">Challenge Complete!</div>'
+                        f'<div style="font-size:15px;font-weight:600;font-family:Plus Jakarta Sans,sans-serif;color:rgba(255,220,180,0.90);margin-bottom:16px;">You scored {clarity}% — target was {challenge["target"]}%</div>'
+                        f'<div style="display:inline-block;background:linear-gradient(135deg,#c4703a,#f0a060);color:white;padding:10px 28px;border-radius:99px;font-size:15px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;box-shadow:0 0 24px rgba(196,112,58,0.55);">+{xp_earned} XP Earned</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    partial_xp = xp_earned // 3
+                    _save_challenge(
+                        challenge["type"],
+                        clarity,
+                        partial_xp
+                    )
+                    st.warning(
+                        f"Score: **{clarity}%** — target was "
+                        f"**{challenge['target']}%**. "
+                        f"You earned **{partial_xp} XP** for attempting. "
+                        f"Keep practising!"
+                    )
+
+                with st.spinner("Transcribing..."):
+                    tx, words = _transcribe_timed(signal, sr)
+                if tx:
+                    st.subheader("What You Said")
+                    st.markdown(f"*{tx}*")
+
+    st.divider()
+
+    # ── Challenge history heatmap ──
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2.5px;color:#2d1a0e;text-transform:uppercase;margin:24px 0 14px;">Challenge History</div>',
+        unsafe_allow_html=True
+    )
+
+    if not history:
+        st.info("Complete your first daily challenge to see your history here.")
+    else:
+        type_colors = {
+            "Speed Round":          "#c4703a",
+            "Whisper Challenge":    "#90bcd4",
+            "Emotional Delivery":   "#f0a0b8",
+            "Tongue Twister Gauntlet": "#c4a0d8",
+            "News Anchor":          "#80c8a8",
+            "Free Flow Saturday":   "#e8c060",
+            "Reflection Sunday":    "#b094d4",
+        }
+
+        for log in history[:10]:
+            c = type_colors.get(log["type"], "#b094d4")
+            score_str = (f"{log['score']:.1f}%"
+                        if log["score"] else "—")
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:14px 20px;margin-bottom:8px;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;display:flex;justify-content:space-between;align-items:center;gap:12px;">'
+                f'<div style="display:flex;align-items:center;gap:12px;">'
+                f'<div style="width:10px;height:36px;border-radius:5px;background:{c};box-shadow:0 0 10px {c}60;flex-shrink:0;"></div>'
+                f'<div>'
+                f'<div style="font-size:13px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;">{log["type"]}</div>'
+                f'<div style="font-size:11px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;">{log["date"]}</div>'
+                f'</div>'
+                f'</div>'
+                f'<div style="display:flex;gap:10px;align-items:center;">'
+                f'<div style="background:rgba(176,148,212,0.20);color:#2d1a0e;padding:4px 14px;border-radius:99px;font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;border:1px solid rgba(176,148,212,0.35);">{score_str}</div>'
+                f'<div style="background:linear-gradient(135deg,rgba(196,112,58,0.25),rgba(232,160,96,0.20));color:#c4703a;padding:4px 14px;border-radius:99px;font-size:12px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;border:1px solid rgba(196,112,58,0.35);">+{log["xp"]} XP</div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+
+def page_leaderboard():
+    user_id = st.session_state.get("user_id")
+    uname   = st.session_state.get("username","")
+    my_handle = _get_or_create_handle(user_id, uname)
+
+    # ── Page header ──
+    st.markdown(
+        '<div style="background:linear-gradient(135deg,rgba(45,26,14,0.82),rgba(30,15,50,0.88));backdrop-filter:blur(24px);border-radius:28px;padding:28px 36px;margin-bottom:24px;border:1.5px solid rgba(255,180,100,0.35);box-shadow:0 0 40px rgba(176,148,212,0.20),0 0 80px rgba(196,112,58,0.10);position:relative;overflow:hidden;">'
+        '<div style="position:absolute;top:-40px;right:-40px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(176,148,212,0.25) 0%,transparent 70%);pointer-events:none;"></div>'
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:3px;color:rgba(240,160,96,0.80);text-transform:uppercase;margin-bottom:6px;">Global Rankings</div>'
+        '<div style="font-size:28px;font-weight:900;font-family:Playfair Display,serif;background:linear-gradient(90deg,#ffe0b0,#ffb870,#c4a0f8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;margin-bottom:6px;">Community Leaderboard</div>'
+        '<div style="font-size:13px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:rgba(255,220,180,0.80);">Anonymous rankings — your identity is protected. Compete by XP and daily practice.</div>'
+        f'<div style="margin-top:14px;display:inline-flex;align-items:center;gap:10px;background:rgba(255,255,255,0.10);border-radius:12px;padding:8px 16px;border:1px solid rgba(255,180,100,0.25);">'
+        f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:rgba(255,220,180,0.85);">Your handle:</div>'
+        f'<div style="font-size:14px;font-weight:900;font-family:Playfair Display,serif;color:#ffe0b0;">{my_handle}</div>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Period selector ──
+    period_col1, period_col2 = st.columns(2)
+    with period_col1:
+        period = st.selectbox(
+            "Leaderboard Period",
+            ["All Time", "This Week"],
+            label_visibility="collapsed"
+        )
+    period_key = "week" if period == "This Week" else "all"
+
+    board = _get_leaderboard(period_key)
+
+    def _xp_tier(xp: int) -> tuple:
+        if xp >= 5000:
+            return "Champion", "#f0c060", \
+                '<circle cx="14" cy="14" r="10" fill="none" stroke="#f0c060" stroke-width="2"/><polygon points="14,6 16,11 22,11 17,15 19,21 14,17 9,21 11,15 6,11 12,11" fill="#f0c060"/>'
+        if xp >= 2000:
+            return "Diamond", "#80d8f8", \
+                '<polygon points="14,4 22,10 19,20 9,20 6,10" fill="none" stroke="#80d8f8" stroke-width="2"/><polygon points="14,8 19,12 17,18 11,18 9,12" fill="#80d8f8" opacity="0.40"/>'
+        if xp >= 1000:
+            return "Gold", "#e8c060", \
+                '<circle cx="14" cy="14" r="9" fill="none" stroke="#e8c060" stroke-width="2.5"/><circle cx="14" cy="14" r="5" fill="#e8c060" opacity="0.50"/>'
+        if xp >= 500:
+            return "Silver", "#c0c8d8", \
+                '<circle cx="14" cy="14" r="9" fill="none" stroke="#c0c8d8" stroke-width="2.5"/><circle cx="14" cy="14" r="5" fill="#c0c8d8" opacity="0.40"/>'
+        return "Bronze", "#c4906a", \
+            '<circle cx="14" cy="14" r="9" fill="none" stroke="#c4906a" stroke-width="2.5"/><circle cx="14" cy="14" r="5" fill="#c4906a" opacity="0.35"/>'
+
+    def _avatar_gradient(handle: str) -> tuple:
+        import hashlib
+        h = int(hashlib.md5(
+            handle.encode()).hexdigest(), 16)
+        hue1 = h % 360
+        hue2 = (hue1 + 60) % 360
+        colors = [
+            ("#b094d4","#80bcd8"),
+            ("#c4703a","#e8a060"),
+            ("#70c890","#90bcd4"),
+            ("#f0a0b8","#c4a0d8"),
+            ("#e8c060","#c4703a"),
+            ("#90bcd4","#70c890"),
+        ]
+        return colors[h % len(colors)]
+
+    # ── Find my rank ──
+    my_rank = next(
+        (r for r in board 
+         if r["user_id"] == user_id), None)
+
+    # ── My rank card ──
+    if my_rank:
+        tier, tier_color, tier_icon = \
+            _xp_tier(my_rank["xp"])
+        av1, av2 = _avatar_gradient(my_handle)
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,rgba(196,112,58,0.35),rgba(232,160,96,0.25));backdrop-filter:blur(18px);border-radius:20px;padding:20px 24px;margin-bottom:20px;border:2px solid rgba(255,180,100,0.50);box-shadow:0 0 24px rgba(196,112,58,0.25),0 8px 28px rgba(120,60,20,0.14);">'
+            f'<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2px;color:rgba(196,112,58,0.90);text-transform:uppercase;margin-bottom:10px;">Your Standing</div>'
+            f'<div style="display:flex;align-items:center;gap:16px;">'
+            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#c4703a;min-width:48px;">#{my_rank["rank"]}</div>'
+            f'<div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,{av1},{av2});display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.70);box-shadow:0 4px 14px rgba(120,60,20,0.20);flex-shrink:0;">'
+            f'<span style="font-size:16px;font-weight:900;font-family:Playfair Display,serif;color:white;">{my_handle[0]}</span>'
+            f'</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:16px;font-weight:800;font-family:Playfair Display,serif;color:#2d1a0e;">{my_handle}</div>'
+            f'<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">'
+            f'<span style="background:rgba(196,112,58,0.20);color:#c4703a;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;border:1px solid rgba(196,112,58,0.35);">{my_rank["xp"]} XP</span>'
+            f'<span style="background:{tier_color}20;color:{tier_color};padding:2px 10px;border-radius:99px;font-size:11px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;border:1px solid {tier_color}40;">{tier}</span>'
+            f'<span style="background:rgba(176,148,212,0.20);color:#5a3520;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;">{my_rank["completed"]} levels</span>'
+            f'</div>'
+            f'</div>'
+            f'<div style="text-align:center;">'
+            f'<svg width="28" height="28" viewBox="0 0 28 28">{tier_icon}</svg>'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2.5px;color:#2d1a0e;text-transform:uppercase;margin:20px 0 14px;">Top Speakers</div>',
+        unsafe_allow_html=True
+    )
+
+    rank_icons = {
+        1: ('<svg width="24" height="24" viewBox="0 0 24 24"><polygon points="12,2 15,9 22,9 17,14 19,21 12,17 5,21 7,14 2,9 9,9" fill="#f0c060"/></svg>', "#f0c060"),
+        2: ('<svg width="24" height="24" viewBox="0 0 24 24"><polygon points="12,2 15,9 22,9 17,14 19,21 12,17 5,21 7,14 2,9 9,9" fill="#c0c8d8"/></svg>', "#c0c8d8"),
+        3: ('<svg width="24" height="24" viewBox="0 0 24 24"><polygon points="12,2 15,9 22,9 17,14 19,21 12,17 5,21 7,14 2,9 9,9" fill="#c4906a"/></svg>', "#c4906a"),
+    }
+
+    for entry in board[:20]:
+        is_me = entry["user_id"] == user_id
+        tier, tier_color, tier_icon = \
+            _xp_tier(entry["xp"])
+        av1, av2 = _avatar_gradient(entry["handle"])
+        rank_icon, rank_color = rank_icons.get(
+            entry["rank"],
+            (f'<span style="font-size:14px;font-weight:900;font-family:Playfair Display,serif;color:#7a5540;">#{entry["rank"]}</span>',
+             "#7a5540")
+        )
+        highlight = (
+            "border:2px solid rgba(196,112,58,0.55);"
+            "box-shadow:0 0 20px rgba(196,112,58,0.20),"
+            "0 6px 20px rgba(120,60,20,0.14),"
+            "0 1px 0 rgba(255,255,255,0.75) inset;"
+            if is_me else
+            "border:1.5px solid rgba(255,255,255,0.58);"
+            "box-shadow:0 4px 16px rgba(120,60,20,0.10),"
+            "0 1px 0 rgba(255,255,255,0.70) inset;"
+        )
+        bg = (
+            "background:rgba(240,133,106,0.25);"
+            if is_me else
+            "background:rgba(255,255,255,0.35);"
+        )
+
+        st.markdown(
+            f'<div style="{bg}backdrop-filter:blur(14px);border-radius:16px;padding:14px 20px;margin-bottom:8px;{highlight}">'
+            f'<div style="display:flex;align-items:center;gap:14px;">'
+            f'<div style="width:32px;text-align:center;flex-shrink:0;">{rank_icon}</div>'
+            f'<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,{av1},{av2});display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.70);box-shadow:0 3px 10px rgba(120,60,20,0.16);flex-shrink:0;">'
+            f'<span style="font-size:15px;font-weight:900;font-family:Playfair Display,serif;color:white;">{entry["handle"][0]}</span>'
+            f'</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;">'
+            f'{entry["handle"]}'
+            f'{"&nbsp;<span style=\'background:rgba(196,112,58,0.25);color:#c4703a;padding:1px 8px;border-radius:99px;font-size:10px;font-weight:800;border:1px solid rgba(196,112,58,0.40);\'>YOU</span>" if is_me else ""}'
+            f'</div>'
+            f'<div style="font-size:11px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;margin-top:2px;">{entry["completed"]} levels completed</div>'
+            f'</div>'
+            f'<div style="display:flex;gap:8px;align-items:center;">'
+            f'<div style="text-align:right;">'
+            f'<div style="font-size:16px;font-weight:900;font-family:Playfair Display,serif;color:#c4703a;">{entry["xp"]}</div>'
+            f'<div style="font-size:10px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:0.5px;">XP</div>'
+            f'</div>'
+            f'<svg width="28" height="28" viewBox="0 0 28 28">{tier_icon}</svg>'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    st.divider()
+
+    # ── XP tier legend ──
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:2.5px;color:#2d1a0e;text-transform:uppercase;margin:20px 0 14px;">XP Rank Tiers</div>',
+        unsafe_allow_html=True
+    )
+
+    tiers = [
+        ("Bronze",  "0 – 499 XP",   "#c4906a",
+         '<circle cx="14" cy="14" r="9" fill="none" stroke="#c4906a" stroke-width="2.5"/>'),
+        ("Silver",  "500 – 999 XP",  "#c0c8d8",
+         '<circle cx="14" cy="14" r="9" fill="none" stroke="#c0c8d8" stroke-width="2.5"/>'),
+        ("Gold",    "1000 – 1999 XP","#e8c060",
+         '<circle cx="14" cy="14" r="9" fill="none" stroke="#e8c060" stroke-width="2.5"/>'),
+        ("Diamond", "2000 – 4999 XP","#80d8f8",
+         '<polygon points="14,4 22,10 19,20 9,20 6,10" fill="none" stroke="#80d8f8" stroke-width="2"/>'),
+        ("Champion","5000+ XP",      "#f0c060",
+         '<polygon points="14,6 16,11 22,11 17,15 19,21 14,17 9,21 11,15 6,11 12,11" fill="#f0c060"/>'),
+    ]
+
+    tier_cols = st.columns(5)
+    for i, (name, xp_range, color, icon) in \
+            enumerate(tiers):
+        with tier_cols[i]:
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 12px;text-align:center;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+                f'<svg width="32" height="32" viewBox="0 0 28 28" style="margin-bottom:8px;">{icon}</svg>'
+                f'<div style="font-size:13px;font-weight:800;font-family:Playfair Display,serif;color:{color};margin-bottom:4px;">{name}</div>'
+                f'<div style="font-size:10px;font-weight:600;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;">{xp_range}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+
+def _load_mood_logs() -> list:
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return []
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT date, mood, stress, notes, created_at
+               FROM mood_logs
+               WHERE user_id = ?
+               ORDER BY created_at DESC
+               LIMIT 30""",
+            (user_id,)
+        ).fetchall()
+    return [{"date": r[0], "mood": r[1], 
+             "stress": r[2], "notes": r[3]} for r in rows]
+
+
+def page_mood():
+    st.title("Mood Tracker")
+    
+    # Mood input form
+    with st.form("mood_form"):
+        mood_col1, mood_col2 = st.columns(2)
+        with mood_col1:
+            mood = st.selectbox(
+                "How are you feeling today?",
+                ["😊 Great", "🙂 Good", "😐 Okay", "😕 Low", "😢 Struggling"],
+                key="mood_input"
+            )
+        with mood_col2:
+            stress = st.slider(
+                "Stress Level (1-10)",
+                min_value=1,
+                max_value=10,
+                value=5,
+                key="stress_input"
+            )
+        
+        notes = st.text_area(
+            "Optional notes about your day",
+            key="mood_notes",
+            placeholder="Anything you want to remember about today..."
+        )
+        
+        submitted = st.form_submit_button("Save Mood", type="primary")
+        
+        if submitted:
+            user_id = st.session_state.get("user_id")
+            if user_id:
+                from datetime import date
+                with _db() as conn:
+                    conn.execute(
+                        """INSERT INTO mood_logs 
+                           (user_id, date, mood, stress, notes)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (user_id, str(date.today()), mood, stress, notes)
+                    )
+                st.success("Mood logged successfully!")
+                st.rerun()
+    
+    # Display mood history
+    st.subheader("Recent Moods")
+    mood_logs = _load_mood_logs()
+    
+    if not mood_logs:
+        st.info("No mood logs yet. Start tracking your daily mood!")
+    else:
+        for log in mood_logs[:10]:
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;margin-bottom:8px;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">'
+                f'<div>'
+                f'<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;">{log["mood"]}</div>'
+                f'<div style="font-size:12px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;">{log["date"]}</div>'
+                f'</div>'
+                f'<div style="display:flex;gap:8px;align-items:center;">'
+                f'<div style="background:rgba(176,148,212,0.20);color:#2d1a0e;padding:4px 14px;border-radius:99px;font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;">Stress: {log["stress"]}/10</div>'
+                f'</div>'
+                f'</div>'
+                f'{f"<div style=\'font-size:12px;color:#5a3520;margin-top:8px;\'>{log["notes"]}</div>" if log["notes"] else ""}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+
+def page_report():
+    st.title("Therapy Report")
+    
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        st.warning("Please log in to view your report.")
+        return
+    
+    # Get user data
+    ex_states = st.session_state.get("ex_states", {})
+    baseline = st.session_state.get("baseline")
+    mood_logs = _load_mood_logs()
+    
+    # Calculate statistics
+    completed_exercises = sum(
+        1 for s in ex_states.values()
+        if isinstance(s, dict) and s.get("completed")
+    )
+    
+    avg_clarity = 0
+    if completed_exercises > 0:
+        scores = [
+            s.get("best_score", 0) 
+            for s in ex_states.values()
+            if isinstance(s, dict) and s.get("best_score")
+        ]
+        avg_clarity = sum(scores) / len(scores) if scores else 0
+    
+    # Report header
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,rgba(45,26,14,0.82),rgba(80,40,10,0.88));backdrop-filter:blur(24px);border-radius:28px;padding:28px 36px;margin-bottom:24px;border:1.5px solid rgba(255,180,100,0.40);box-shadow:0 0 40px rgba(196,112,58,0.25),0 0 80px rgba(196,112,58,0.12);">'
+        f'<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:3px;color:rgba(240,160,96,0.80);text-transform:uppercase;margin-bottom:6px;">Progress Summary</div>'
+        f'<div style="font-size:28px;font-weight:900;font-family:Playfair Display,serif;background:linear-gradient(90deg,#ffe0b0,#ffb870);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">Your Journey</div>'
+        f'<div style="font-size:14px;font-weight:600;font-family:Plus Jakarta Sans,sans-serif;color:rgba(255,220,180,0.85);margin-top:8px;">Keep up the great work!</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+    
+    # Stats cards
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;text-align:center;">'
+            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#c4703a;">{completed_exercises}</div>'
+            f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Completed Exercises</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    with col2:
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;text-align:center;">'
+            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#70c890;">{avg_clarity:.1f}%</div>'
+            f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Average Clarity</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    with col3:
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;text-align:center;">'
+            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#b094d4;">{len(mood_logs)}</div>'
+            f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Mood Entries</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    # Baseline comparison
+    if baseline and baseline.get("clarity"):
+        baseline_clarity = baseline["clarity"]
+        st.subheader("Baseline Progress")
+        st.markdown(
+            f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+            f'<div style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;">'
+            f'Your baseline clarity was <strong>{baseline_clarity:.1f}%</strong>. '
+            f'Current average: <strong>{avg_clarity:.1f}%</strong>. '
+            f'<strong style="color: #70c890;">Improvement: {avg_clarity - baseline_clarity:.1f}%</strong>' if avg_clarity > baseline_clarity else ''
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+
+def page_shadowing():
+    st.title("Shadowing Practice")
+    
+    st.markdown(
+        '<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;margin-bottom:20px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;">'
+        '<div style="font-size:16px;font-weight:600;font-family:Playfair Display,serif;color:#2d1a0e;margin-bottom:16px;">What is Shadowing?</div>'
+        '<div style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;line-height:1.75;">'
+        'Shadowing is a powerful technique where you listen to fluent speech and repeat it in real-time, matching the speaker\'s rhythm, intonation, and pace. This helps your brain develop new speech patterns and improves fluency naturally.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+    
+    # Sample audio selection
+    st.subheader("Choose a Practice Audio")
+    
+    audio_options = [
+        "Slow, Clear Speech - 60 seconds",
+        "Medium Pace - 45 seconds", 
+        "Natural Conversation - 30 seconds",
+        "Professional Reading - 40 seconds"
+    ]
+    
+    selected = st.selectbox(
+        "Select audio to shadow:",
+        audio_options,
+        key="shadowing_audio"
+    )
+    
+    # Practice instructions
+    st.markdown(
+        '<div style="background:rgba(176,148,212,0.20);border-radius:16px;padding:20px 24px;border:1.5px solid rgba(176,148,212,0.35);margin:16px 0;">'
+        '<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;margin-bottom:12px;">📝 Practice Instructions:</div>'
+        '<ol style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;line-height:1.75;padding-left:20px;">'
+        '<li>Put on headphones and listen to the audio</li>'
+        '<li>Start speaking along with the audio, about 1-2 seconds behind</li>'
+        '<li>Match the speaker\'s rhythm and intonation exactly</li>'
+        '<li>Don\'t worry about perfection - focus on flow</li>'
+        '<li>Practice for at least 5 minutes daily</li>'
+        '</ol>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+    
+    # Recording section
+    st.subheader("Record Your Shadowing")
+    signal, sr = _recording_section("shadowing_rec")
+    
+    if signal is not None:
+        if st.button(
+            "Analyze Shadowing",
+            type="primary",
+            use_container_width=True,
+            key="shadowing_analyze"
+        ):
+            with st.spinner("Analyzing your shadowing..."):
+                result, clarity = _analyze(signal, sr)
+                result["corrected_signal"] = \
+                    _smooth_corrected_audio(
+                        result["corrected_signal"],
+                        result["sr"]
+                    )
+            
+            _score_card(clarity, "Shadowing Score")
+            _event_metrics(result)
+            
+            # Feedback based on score
+            if clarity >= 70:
+                st.success(
+                    f"Excellent shadowing! Your score of **{clarity}%** shows great rhythm matching. "
+                    "Keep practicing to make this your natural speech pattern!"
+                )
+            elif clarity >= 50:
+                st.info(
+                    f"Good effort! Score: **{clarity}%**. "
+                    "Focus on staying relaxed and matching the speaker's pace more closely."
+                )
+            else:
+                st.warning(
+                    f"Score: **{clarity}%**. "
+                    "Don't worry! Shadowing takes practice. Try shorter audio segments and focus on rhythm over accuracy."
+                )
+
+
 def main():
     st.set_page_config(
         page_title="Stutter Clarity Coach",
@@ -3408,7 +4995,10 @@ def main():
     elif page == "progress":  page_progress()
     elif page == "mood":      page_mood()
     elif page == "report":    page_report()
+    elif page == "coach":     page_coach()
     elif page == "shadowing": page_shadowing()
+    elif page == "challenge": page_challenge()
+    elif page == "leaderboard": page_leaderboard()
 
 
 if __name__ == "__main__":
