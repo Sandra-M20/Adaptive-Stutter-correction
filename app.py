@@ -22,6 +22,12 @@ import matplotlib
 matplotlib.use("Agg")          # headless — no display window needed
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors as rl_colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                 Table, TableStyle, HRFlowable, PageBreak)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATABASE
@@ -778,7 +784,7 @@ def _compute_clarity(result: dict) -> float:
 
 
 _NAV_OPTIONS  = ["Home","Exercises","Progress",
-                "Mood","Report","Coach","Shadowing",
+                "Mood","Report","Shadowing",
                 "Challenge","Ranks"]
 _NAV_PAGE_MAP = {
     "Home":      "home",
@@ -786,12 +792,11 @@ _NAV_PAGE_MAP = {
     "Progress":  "progress",
     "Mood":      "mood",
     "Report":    "report",
-    "Coach":     "coach",
     "Shadowing": "shadowing",
     "Challenge": "challenge",
     "Ranks":     "leaderboard",
 }
-_PAGE_IDX = {"home": 0, "exercises": 1, "progress": 2, "mood": 3, "report": 4, "coach": 5, "shadowing": 6, "challenge": 7, "leaderboard": 8}
+_PAGE_IDX = {"home": 0, "exercises": 1, "progress": 2, "mood": 3, "report": 4, "shadowing": 5, "challenge": 6, "leaderboard": 7}
 
 def _nav_to(page: str):
     """Navigate to a top-level page. Radio re-derives its selection from page."""
@@ -953,124 +958,20 @@ def _get_total_xp() -> int:
     return exercise_xp + challenge_xp
 
 def _already_completed_today() -> bool:
-    from datetime import date
     user_id = st.session_state.get("user_id")
     if not user_id:
         return False
-    today = str(date.today())
+    from datetime import date
     with _db() as conn:
         row = conn.execute(
-            """SELECT id FROM challenges 
-               WHERE user_id=? 
-               AND challenge_date=? 
-               AND completed=1""",
-            (user_id, today)
+            "SELECT COUNT(*) FROM challenges WHERE user_id=? AND challenge_date=?",
+            (user_id, str(date.today()))
         ).fetchone()
-    return row is not None
-
-def _get_or_create_handle(user_id: int, 
-                           username: str) -> str:
-    with _db() as conn:
-        row = conn.execute(
-            "SELECT handle FROM anon_handles "
-            "WHERE user_id=?",
-            (user_id,)
-        ).fetchone()
-        if row:
-            return row[0]
-        adjectives = [
-            "Swift","Calm","Bold","Clear","Bright",
-            "Gentle","Steady","Fluid","Smooth","Warm",
-            "Keen","Kind","Wise","Pure","Strong"
-        ]
-        animals = [
-            "Fox","Owl","Hawk","Wolf","Bear",
-            "Deer","Swan","Lark","Wren","Crane",
-            "Finch","Dove","Lynx","Hare","Seal"
-        ]
-        import random, hashlib
-        seed = int(hashlib.md5(
-            username.encode()).hexdigest(), 16)
-        random.seed(seed)
-        adj    = random.choice(adjectives)
-        animal = random.choice(animals)
-        number = (seed % 90) + 10
-        handle = f"{adj}{animal}{number}"
-        conn.execute(
-            "INSERT OR IGNORE INTO anon_handles "
-            "(user_id, handle) VALUES (?,?)",
-            (user_id, handle)
-        )
-        return handle
-
-def _get_leaderboard(period: str="all") -> list:
-    with _db() as conn:
-        users = conn.execute(
-            "SELECT id, username FROM users"
-        ).fetchall()
-        result = []
-        for uid, uname in users:
-            handle = _get_or_create_handle(uid, uname)
-            prog = conn.execute(
-                "SELECT ex_states FROM progress "
-                "WHERE user_id=?",
-                (uid,)
-            ).fetchone()
-            ex_xp = 0
-            completed = 0
-            if prog and prog[0]:
-                import json
-                states = json.loads(prog[0])
-                completed = sum(
-                    1 for s in states.values()
-                    if isinstance(s, dict)
-                    and s.get("completed")
-                )
-                ex_xp = completed * 100
-            if period == "week":
-                from datetime import date, timedelta
-                week_ago = str(
-                    date.today() - timedelta(days=7))
-                ch_row = conn.execute(
-                    "SELECT COALESCE(SUM(xp_earned),0) "
-                    "FROM challenges "
-                    "WHERE user_id=? "
-                    "AND challenge_date>=?",
-                    (uid, week_ago)
-                ).fetchone()
-            else:
-                ch_row = conn.execute(
-                    "SELECT COALESCE(SUM(xp_earned),0) "
-                    "FROM challenges WHERE user_id=?",
-                    (uid,)
-                ).fetchone()
-            ch_xp = ch_row[0] if ch_row else 0
-            total = ex_xp + ch_xp
-            streak_row = conn.execute(
-                "SELECT updated_at FROM progress "
-                "WHERE user_id=?",
-                (uid,)
-            ).fetchone()
-            streak = 1 if streak_row else 0
-            result.append({
-                "user_id":   uid,
-                "handle":    handle,
-                "xp":        total,
-                "completed": completed,
-                "streak":    streak,
-            })
-        result.sort(key=lambda x: x["xp"], 
-                    reverse=True)
-        for i, r in enumerate(result):
-            r["rank"] = i + 1
-        return result
+    return row[0] > 0
 
 
-def _clarity_color(score: float) -> str:
-    if score >= 80:  return "#70c890"
-    if score >= 70:  return "#e0b840"
-    if score >= 50:  return "#f0a090"
-    return "#d090b0"
+
+
 
 
 def _clarity_label(score: float) -> str:
@@ -1560,11 +1461,165 @@ label {
     font-weight: 600 !important;
     color: #2d1a0e !important;
 }
+    .stSelectbox > div > div > select {
+        background:rgba(244,242,231,0.95)!important;
+        color:#5d4037!important;
+        border:2px solid rgba(194,154,122,0.60)!important;
+        border-radius:14px!important;
+        font-size:15px!important;
+        backdrop-filter:blur(14px)!important;
+        padding:12px 16px!important;
+        box-shadow:
+            0 2px 6px rgba(120,60,20,0.08),
+            0 6px 16px rgba(120,60,20,0.10),
+            inset 0 1px 0 rgba(255,255,255,0.80) !important;
+    }
+    .stSelectbox > div > div > select:focus {
+        border-color:rgba(194,154,122,0.75)!important;
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.10),
+            0 8px 24px rgba(120,60,20,0.14),
+            0 0 0 3px rgba(194,154,122,0.20),
+            inset 0 1px 0 rgba(255,255,255,0.85) !important;
+        background:rgba(244,242,231,1.0)!important;
+    }
+    /* Force light background for all selectboxes including mood tracker */
+    div[data-testid="stSelectbox"] > div > div > select {
+        background:rgba(244,242,231,0.95)!important;
+        color:#5d4037!important;
+        border:2px solid rgba(194,154,122,0.60)!important;
+        border-radius:14px!important;
+        font-size:15px!important;
+        backdrop-filter:blur(14px)!important;
+        padding:12px 16px!important;
+        box-shadow:
+            0 2px 6px rgba(120,60,20,0.08),
+            0 6px 16px rgba(120,60,20,0.10),
+            inset 0 1px 0 rgba(255,255,255,0.80) !important;
+    }
+    div[data-testid="stSelectbox"] > div > div > select:focus {
+        border-color:rgba(194,154,122,0.75)!important;
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.10),
+            0 8px 24px rgba(120,60,20,0.14),
+            0 0 0 3px rgba(194,154,122,0.20),
+            inset 0 1px 0 rgba(255,255,255,0.85) !important;
+        background:rgba(244,242,231,1.0)!important;
+    }
 .stSlider label,
 .stSlider p {
     font-family: 'Plus Jakarta Sans', sans-serif !important;
     font-weight: 700 !important;
     color: #2d1a0e !important;
+}
+
+/* ── ALL SELECT / DROPDOWN BOXES ── */
+[data-baseweb="select"] > div {
+    background: rgba(242,232,218,0.85) !important;
+    border: 1.5px solid rgba(196,150,110,0.50) !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(14px) !important;
+    box-shadow: 0 2px 8px rgba(120,60,20,0.08), inset 0 1px 0 rgba(255,255,255,0.80) !important;
+}
+[data-baseweb="select"] span,
+[data-baseweb="select"] [class*="singleValue"],
+[data-baseweb="select"] [class*="placeholder"],
+[data-baseweb="select"] input {
+    color: #7a4030 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    background: transparent !important;
+}
+[data-baseweb="select"] svg {
+    fill: #c4703a !important;
+}
+
+/* ── DROPDOWN OPEN LIST (the floating menu) ── */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
+[data-baseweb="menu"],
+[data-baseweb="menu"] > ul {
+    background: rgba(242,232,218,0.98) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border: 1.5px solid rgba(196,150,110,0.45) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 32px rgba(120,60,20,0.18), inset 0 1px 0 rgba(255,255,255,0.80) !important;
+    overflow: hidden !important;
+}
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] [role="option"] {
+    background: transparent !important;
+    color: #7a4030 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+}
+[data-baseweb="menu"] li:hover,
+[data-baseweb="menu"] [aria-selected="true"],
+[data-baseweb="menu"] [role="option"]:hover {
+    background: rgba(196,150,110,0.25) !important;
+    color: #3a1a0e !important;
+}
+
+/* ── TEXTAREA ── */
+.stTextArea textarea,
+textarea {
+    background: rgba(242,232,218,0.75) !important;
+    color: #7a4030 !important;
+    border: 1.5px solid rgba(196,150,110,0.50) !important;
+    border-radius: 14px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    backdrop-filter: blur(14px) !important;
+    box-shadow: 0 2px 6px rgba(120,60,20,0.08), inset 0 1px 0 rgba(255,255,255,0.75) !important;
+    padding: 14px 16px !important;
+}
+textarea:focus {
+    border-color: rgba(196,112,58,0.70) !important;
+    background: rgba(250,242,230,0.90) !important;
+    box-shadow: 0 0 0 3px rgba(196,112,58,0.18), inset 0 1px 0 rgba(255,255,255,0.80) !important;
+    outline: none !important;
+}
+textarea::placeholder {
+    color: #c4906a !important;
+    font-weight: 500 !important;
+    opacity: 1 !important;
+}
+.stTextArea label p {
+    color: #7a5540 !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+}
+
+/* ── SLIDER — remove harsh red ── */
+[data-testid="stSlider"] [role="slider"] {
+    background: linear-gradient(135deg, #c4703a, #e8a060) !important;
+    border: 2px solid rgba(255,255,255,0.80) !important;
+    box-shadow: 0 3px 12px rgba(196,112,58,0.45) !important;
+}
+[data-testid="stSlider"] [data-testid="stSliderTrack"] > div:nth-child(2) {
+    background: linear-gradient(90deg, #c4703a, #e8a060) !important;
+}
+[data-testid="stSlider"] [data-testid="stSliderTrack"] > div:first-child {
+    background: rgba(220,200,180,0.45) !important;
+}
+
+/* ── FORM SUBMIT BUTTON ── */
+[data-testid="stFormSubmitButton"] > button {
+    background: linear-gradient(135deg, rgba(196,112,58,0.85), rgba(232,160,96,0.85)) !important;
+    color: white !important;
+    border: 1.5px solid rgba(255,255,255,0.55) !important;
+    border-radius: 18px !important;
+    font-weight: 800 !important;
+    box-shadow: 0 4px 16px rgba(196,112,58,0.40), inset 0 1px 0 rgba(255,255,255,0.35) !important;
+}
+[data-testid="stFormSubmitButton"] > button:hover {
+    background: linear-gradient(135deg, rgba(216,132,68,0.95), rgba(245,175,110,0.95)) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 22px rgba(196,112,58,0.55) !important;
 }
 
     /* TABS */
@@ -2181,6 +2236,125 @@ label {
         margin: 0 2px !important;
         animation: typingPulse 1.2s ease-in-out infinite !important;
     }
+    
+    /* DR. CLARA FLOATING BUTTON */
+    [data-testid="stButton"] button[key="clara_toggle_btn"] {
+        position: fixed !important;
+        bottom: 30px !important;
+        right: 30px !important;
+        z-index: 99999 !important;
+        width: 130px !important;
+        height: 52px !important;
+        border-radius: 99px !important;
+        background: linear-gradient(135deg, #4a90e2, #7ec8e3, #a0b4f8) !important;
+        border: 2px solid rgba(255,255,255,0.80) !important;
+        color: white !important;
+        font-weight: 800 !important;
+        font-size: 13px !important;
+        box-shadow:
+            0 0 0 4px rgba(74,144,226,0.25),
+            0 0 24px rgba(74,144,226,0.60),
+            0 8px 24px rgba(74,144,226,0.40) !important;
+        animation: claraGlow 2.5s ease-in-out infinite !important;
+        text-shadow: 0 0 12px rgba(74,144,226,0.8) !important;
+    }
+
+    @keyframes claraGlow {
+        0%,100% {
+            box-shadow:
+                0 0 0 4px rgba(74,144,226,0.25),
+                0 0 20px rgba(74,144,226,0.55),
+                0 8px 24px rgba(74,144,226,0.35);
+            text-shadow: 0 0 12px rgba(74,144,226,0.8) !important;
+        }
+        50% {
+            box-shadow:
+                0 0 0 6px rgba(74,144,226,0.35),
+                0 0 36px rgba(74,144,226,0.75),
+                0 12px 32px rgba(74,144,226,0.55);
+            text-shadow: 0 0 20px rgba(74,144,226,1.0) !important;
+        }
+    }
+    
+    /* AUDIO INPUT — enhanced polished look */
+    [data-testid="stAudioInput"] {
+        background: linear-gradient(135deg,
+            rgba(210,190,255,0.50),
+            rgba(180,220,255,0.40),
+            rgba(255,200,230,0.35)) !important;
+        border: 1.5px solid rgba(176,148,212,0.65) !important;
+        border-radius: 20px !important;
+        backdrop-filter: blur(24px) !important;
+        -webkit-backdrop-filter: blur(24px) !important;
+        box-shadow:
+            0 2px 4px rgba(120,60,20,0.06),
+            0 8px 20px rgba(176,148,212,0.22),
+            0 20px 40px rgba(176,148,212,0.12),
+            0 1px 0 rgba(255,255,255,0.90) inset !important;
+        padding: 10px 16px !important;
+        transition: all 0.3s ease !important;
+    }
+    [data-testid="stAudioInput"]:hover {
+        border-color: rgba(176,148,212,0.90) !important;
+        box-shadow:
+            0 4px 8px rgba(120,60,20,0.08),
+            0 12px 28px rgba(176,148,212,0.32),
+            0 1px 0 rgba(255,255,255,0.95) inset !important;
+        transform: translateY(-2px) !important;
+    }
+    [data-testid="stAudioInput"] > div {
+        background: transparent !important;
+    }
+    /* Waveform dots — blue tinted for visibility */
+    [data-testid="stAudioInput"] canvas {
+        opacity: 0.90 !important;
+        filter: hue-rotate(200deg) saturate(1.2) brightness(1.2) !important;
+    }
+    /* Mic button — gradient pill */
+    [data-testid="stAudioInput"] button {
+        background: linear-gradient(135deg,#b094d4,#80bcd8) !important;
+        border: 2px solid rgba(255,255,255,0.80) !important;
+        border-radius: 50% !important;
+        width: 38px !important;
+        height: 38px !important;
+        box-shadow:
+            0 4px 14px rgba(176,148,212,0.55),
+            0 0 24px rgba(126,200,227,0.35),
+            0 1px 0 rgba(255,255,255,0.60) inset !important;
+        transition: all 0.25s ease !important;
+    }
+    [data-testid="stAudioInput"] button:hover {
+        background: linear-gradient(135deg,#c4a0e8,#90d0f0) !important;
+        transform: scale(1.10) !important;
+        box-shadow:
+            0 6px 20px rgba(176,148,212,0.70),
+            0 0 32px rgba(126,200,227,0.50) !important;
+    }
+    [data-testid="stAudioInput"] button svg {
+        fill: white !important;
+        color: white !important;
+    }
+    /* Timer 00:00 — styled to match */
+    [data-testid="stAudioInput"] span,
+    [data-testid="stAudioInput"] div[class*="timer"],
+    [data-testid="stAudioInput"] *[class*="time"] {
+        background: rgba(176,148,212,0.25) !important;
+        color: #7a5540 !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 12px !important;
+        border-radius: 8px !important;
+        padding: 3px 8px !important;
+        border: 1px solid rgba(176,148,212,0.35) !important;
+    }
+    /* Label above recorder */
+    [data-testid="stAudioInput"] label p {
+        color: #7a5540 !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 13px !important;
+        letter-spacing: 0.3px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2403,6 +2577,20 @@ def _intro_cards_html() -> str:
         '<div class="cards-vp"><div class="cards-track">' + track + '</div></div>'
         '</div>'
     )
+
+
+def _clarity_color(score: float) -> str:
+    if score >= 80:  return "#70c890"
+    if score >= 70:  return "#e0b840"
+    if score >= 50:  return "#f0a090"
+    return "#d090b0"
+
+
+def _clarity_label(score: float) -> str:
+    if score >= 80:  return "Fully Fluent"
+    if score >= 70:  return "Efficient"
+    if score >= 50:  return "Moderate Stutter"
+    return "Needs Attention"
 
 
 def _score_card(score: float, label: str = "Clarity Score"):
@@ -3228,121 +3416,300 @@ def page_progress():
 
     bl = st.session_state.baseline
     if not bl:
-        st.warning(
-            "No baseline recorded yet. "
-            "Go to **Home** and record your first assessment."
-        )
+        st.warning("No baseline recorded yet. Go to Home and record your first assessment.")
         return
 
-    st.metric("Baseline Score", f"{bl['clarity']}%")
+    ex_states       = st.session_state.ex_states
+    completed_count = sum(1 for s in ex_states.values() if s["completed"])
+    best_scores     = [s["best_score"] for s in ex_states.values() if s.get("best_score")]
+    all_attempts    = sum(s.get("attempts", 0) for s in ex_states.values())
+    best_ever       = max(best_scores) if best_scores else 0
+    avg_score       = round(sum(best_scores) / len(best_scores), 1) if best_scores else 0
+    improvement     = round(best_ever - bl["clarity"], 1) if best_ever else 0
+
+    # ── Hero stat cards ──────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    def _stat(col, value, label, color):
+        col.markdown(
+            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(18px);'
+            f'border-radius:20px;padding:22px 16px;text-align:center;'
+            f'border:1.5px solid rgba(255,255,255,0.62);'
+            f'box-shadow:0 8px 24px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.80) inset;">'
+            f'<div style="font-size:38px;font-weight:900;font-family:Playfair Display,serif;'
+            f'color:{color};line-height:1;">{value}</div>'
+            f'<div style="font-size:11px;font-weight:700;color:#7a5540;text-transform:uppercase;'
+            f'letter-spacing:1px;margin-top:6px;font-family:Plus Jakarta Sans,sans-serif;">{label}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    _stat(c1, f"{bl['clarity']}%",       "Baseline",          "#90bcd4")
+    _stat(c2, f"{best_ever}%",           "Best Score",         "#b094d4")
+    _stat(c3, f"{completed_count}/{len(EXERCISES)}", "Completed", "#70c890")
+    _stat(c4, f"{all_attempts}",         "Total Attempts",     "#e8c060")
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    # ── Chart 1: Bar chart — Exercise best scores ────────────────────────
+    st.markdown(
+        '<div class="sec-label">Exercise Best Scores</div>',
+        unsafe_allow_html=True
+    )
+
+    ex_labels  = [f"L{ex['id']+1}\n{ex['title'].split(':')[-1].strip()[:10]}" for ex in EXERCISES]
+    ex_scores  = [ex_states[ex["id"]]["best_score"] or 0 for ex in EXERCISES]
+    ex_done    = [ex_states[ex["id"]]["completed"] for ex in EXERCISES]
+    target_vals= [_ex_target(ex["id"]) for ex in EXERCISES]
+
+    bar_colors = [
+        "#059669" if d else ("#10b981" if s > 0 else "#6ee7b7")
+        for s, d in zip(ex_scores, ex_done)
+    ]
+
+    fig1, ax1 = plt.subplots(figsize=(12, 5), facecolor="none")
+    ax1.set_facecolor("none")
+    fig1.patch.set_alpha(0.0)
+    ax1.set_facecolor((1.0, 1.0, 1.0, 0.15))
+
+    bars = ax1.bar(ex_labels, ex_scores, color=bar_colors,
+                   edgecolor="#ffffff", width=0.6, zorder=2,
+                   linewidth=0.8, alpha=0.4)
+    ax1.plot(ex_labels, target_vals, color="#e8c060", linewidth=1.8,
+             linestyle="--", alpha=0.85, label="Target", zorder=3, marker="o",
+             markersize=3)
+    ax1.axhline(bl["clarity"], color="#90bcd4", linewidth=1.5,
+                linestyle=":", alpha=0.80,
+                label=f"Baseline {bl['clarity']}%", zorder=3)
+
+    for bar, score in zip(bars, ex_scores):
+        if score > 0:
+            ax1.text(bar.get_x() + bar.get_width() / 2,
+                     bar.get_height() + 1.5,
+                     f"{score:.0f}%", ha="center", va="bottom",
+                     color="#2d1a0e", fontsize=10, fontweight="700")
+
+    ax1.set_ylim(0, 115)
+    ax1.set_ylabel("Score (%)", color="#5a3520", fontsize=11,
+                   fontfamily="sans-serif")
+    ax1.tick_params(axis='both', colors="#5a3520", labelsize=11, labelcolor="#5a3520")
+    for sp in ax1.spines.values():
+        sp.set_visible(False)
+    ax1.grid(axis="y", color="#c4a0d8", linewidth=0.8,
+             linestyle="--", alpha=0.25, zorder=1)
+    leg = ax1.legend(facecolor="white", edgecolor=(0.69,0.58,0.83,0.40),
+                     labelcolor="#7a5540", fontsize=11,
+                     framealpha=0.7, loc="upper right")
+    plt.tight_layout(pad=1.0)
+    st.pyplot(fig1, use_container_width=True)
+    plt.close(fig1)
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+    # ── Chart 2 + Chart 3 side by side ──────────────────────────────────
+    col_left, col_right = st.columns(2)
+
+    # Donut chart — completion status
+    with col_left:
+        st.markdown(
+            '<div class="sec-label">Completion Status</div>',
+            unsafe_allow_html=True
+        )
+        locked     = len(EXERCISES) - completed_count - sum(
+            1 for s in ex_states.values()
+            if s.get("unlocked") and not s.get("completed")
+        )
+        in_progress = sum(
+            1 for s in ex_states.values()
+            if s.get("unlocked") and not s.get("completed")
+        )
+        sizes  = [completed_count, in_progress, max(0, locked)]
+        labels = ["Completed", "In Progress", "Locked"]
+        colors_d = ["#8b5cf6", "#3b82f6", "#e879f9"]
+        sizes  = [s for s in sizes if s > 0]
+        labels = [l for l, s in zip(labels, [completed_count, in_progress, max(0,locked)]) if s > 0]
+        colors_d = [c for c, s in zip(colors_d, [completed_count, in_progress, max(0,locked)]) if s > 0]
+
+        fig2, ax2 = plt.subplots(figsize=(5, 5), facecolor="none")
+        ax2.set_facecolor("none")
+        fig2.patch.set_alpha(0.0)
+        ax2.set_facecolor((1.0, 1.0, 1.0, 0.15))
+        wedges, texts, autotexts = ax2.pie(
+            sizes, labels=labels, colors=colors_d,
+            autopct="%1.0f%%", startangle=90,
+            pctdistance=0.75,
+            wedgeprops=dict(width=0.55, edgecolor="white", linewidth=2),
+        )
+        for t in texts:
+            t.set_color("#7a5540")
+            t.set_fontsize(10)
+            t.set_fontweight("700")
+        for at in autotexts:
+            at.set_color("#2d1a0e")
+            at.set_fontsize(10)
+            at.set_fontweight("800")
+        ax2.text(0, 0,
+                 f"{completed_count}\nDone",
+                 ha="center", va="center",
+                 color="#8b5cf6", fontsize=14, fontweight="900")
+        plt.tight_layout(pad=0.5)
+        st.pyplot(fig2, use_container_width=True)
+        plt.close(fig2)
+
+    # Horizontal bar — stutter breakdown from baseline
+    with col_right:
+        st.markdown(
+            '<div class="sec-label">Your Stutter Profile</div>',
+            unsafe_allow_html=True
+        )
+        pause_e  = bl["result"].get("pause_events", 0)
+        prolong_e= bl["result"].get("prolongation_events", 0)
+        rep_e    = bl["result"].get("repetition_events", 0)
+
+        categories = ["Blocks\n(Pauses)", "Prolongations", "Repetitions"]
+        values     = [pause_e, prolong_e, rep_e]
+        bar_c      = ["#3b82f6", "#f59e0b", "#ef4444"]
+
+        fig3, ax3 = plt.subplots(figsize=(5, 5), facecolor="none")
+        ax3.set_facecolor("none")
+        fig3.patch.set_alpha(0.0)
+        ax3.set_facecolor((1.0, 1.0, 1.0, 0.15))
+        h_bars = ax3.barh(categories, values, color=bar_c,
+                          edgecolor="#ffffff", linewidth=1.2,
+                          height=0.5, alpha=0.8)
+        for bar, val in zip(h_bars, values):
+            ax3.text(bar.get_width() + 0.05, bar.get_y() + bar.get_height()/2,
+                     f"  {val}", va="center", color="#2d1a0e",
+                     fontsize=11, fontweight="800")
+        ax3.set_xlim(0, max(values) * 1.4 + 1)
+        ax3.tick_params(axis='both', colors="#5a3520", labelsize=11, labelcolor="#5a3520")
+        for sp in ax3.spines.values():
+            sp.set_visible(False)
+        ax3.grid(axis="x", color="#c4a0d8",
+                 linewidth=0.8, linestyle="--", alpha=0.20)
+        ax3.set_title("Events detected in baseline",
+                      color="#5a3520", fontsize=11, pad=8)
+        plt.tight_layout(pad=0.8)
+        st.pyplot(fig3, use_container_width=True)
+        plt.close(fig3)
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+    # ── Chart 4: Improvement line chart ─────────────────────────────────
+    if best_scores:
+        st.markdown(
+            '<div class="sec-label">Score Progression</div>',
+            unsafe_allow_html=True
+        )
+        attempted_exs = [
+            (ex["id"], ex_states[ex["id"]]["best_score"])
+            for ex in EXERCISES
+            if ex_states[ex["id"]].get("best_score")
+        ]
+        if len(attempted_exs) >= 2:
+            x_ids   = [f"L{i+1}" for i, _ in attempted_exs]
+            y_scores= [s for _, s in attempted_exs]
+
+            fig4, ax4 = plt.subplots(figsize=(12, 5), facecolor="none")
+            ax4.set_facecolor("none")
+            fig4.patch.set_alpha(0.0)
+            ax4.set_facecolor((1.0, 1.0, 1.0, 0.15))
+
+            ax4.fill_between(range(len(y_scores)), bl["clarity"],
+                             y_scores,
+                             where=[s >= bl["clarity"] for s in y_scores],
+                             alpha=0.18, color="#70c890",
+                             label="Above baseline")
+            ax4.fill_between(range(len(y_scores)), bl["clarity"],
+                             y_scores,
+                             where=[s < bl["clarity"] for s in y_scores],
+                             alpha=0.12, color="#d4849a")
+
+            ax4.plot(range(len(y_scores)), y_scores,
+                     color="#8b5cf6", linewidth=2.5,
+                     marker="o", markersize=7,
+                     markerfacecolor="white",
+                     markeredgecolor="#8b5cf6",
+                     markeredgewidth=2, zorder=4)
+
+            ax4.axhline(bl["clarity"], color="#3b82f6",
+                        linewidth=1.5, linestyle=":",
+                        alpha=0.80, label=f"Baseline {bl['clarity']}%")
+
+            for i, score in enumerate(y_scores):
+                ax4.annotate(
+                    f"{score}%",
+                    (i, score),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha="center", fontsize=10,
+                    fontweight="700", color="#2d1a0e"
+                )
+
+            ax4.set_xticks(range(len(x_ids)))
+            ax4.set_xticklabels(x_ids, fontsize=10, color="#7a5540")
+            ax4.set_ylim(
+                max(0, min(y_scores) - 10),
+                min(110, max(y_scores) + 15)
+            )
+            ax4.tick_params(axis='both', colors="#5a3520", labelsize=11, labelcolor="#5a3520")
+            for sp in ax4.spines.values():
+                sp.set_visible(False)
+            ax4.grid(axis="y", color="#c4a0d8",
+                     linewidth=0.8, linestyle="--", alpha=0.20)
+            leg4 = ax4.legend(facecolor="white",
+                              edgecolor=(0.69,0.58,0.83,0.40),
+                              labelcolor="#7a5540", fontsize=11,
+                              framealpha=0.7)
+            plt.tight_layout(pad=1.0)
+            st.pyplot(fig4, use_container_width=True)
+            plt.close(fig4)
+
     st.divider()
 
-    # Exercise summary table
-    st.subheader("Exercise Summary")
-
-    completed_count = sum(
-        1 for s in st.session_state.ex_states.values() if s["completed"]
+    # ── Exercise table ───────────────────────────────────────────────────
+    st.markdown(
+        '<div class="sec-label">Exercise Details</div>',
+        unsafe_allow_html=True
     )
-    st.progress(
-        completed_count / len(EXERCISES),
-        text=f"{completed_count} / {len(EXERCISES)} exercises completed",
-    )
-    st.markdown("")
-
-    hdr = st.columns([3, 2, 2, 2])
-    for col, text in zip(hdr, ["Exercise", "Status", "Best Score", "Attempts"]):
-        col.markdown(f"**{text}**")
-    st.divider()
 
     for ex in EXERCISES:
-        s = st.session_state.ex_states[ex["id"]]
-
-        if s["completed"]:
-            status = "Complete"
-        elif s["unlocked"] and s["attempts"] > 0:
-            status = "In Progress"
-        elif s["unlocked"]:
-            status = "Unlocked"
-        else:
-            status = "Locked"
-
+        s      = ex_states[ex["id"]]
+        status = (
+            "✅ Complete"    if s["completed"] else
+            "🔄 In Progress" if s.get("unlocked") and s.get("attempts",0) > 0 else
+            "🔓 Unlocked"    if s.get("unlocked") else
+            "🔒 Locked"
+        )
         score_str = "—"
         if s["best_score"] is not None:
             delta     = s["best_score"] - bl["clarity"]
             score_str = f"{s['best_score']}%  ({delta:+.1f}%)"
 
-        row = st.columns([3, 2, 2, 2])
-        row[0].markdown(f"**{ex['title']}**")
-        row[1].markdown(status)
-        row[2].markdown(score_str)
-        row[3].markdown(str(s["attempts"]) if s["attempts"] > 0 else "—")
+        color = (
+            "rgba(112,200,144,0.20)" if s["completed"] else
+            "rgba(144,188,212,0.15)" if s.get("unlocked") else
+            "rgba(255,255,255,0.12)"
+        )
+        st.markdown(
+            f'<div style="background:{color};backdrop-filter:blur(14px);'
+            f'border-radius:14px;padding:12px 20px;margin-bottom:6px;'
+            f'border:1px solid rgba(255,255,255,0.50);'
+            f'display:flex;justify-content:space-between;align-items:center;gap:12px;">'
+            f'<div style="font-size:13px;font-weight:700;color:#2d1a0e;'
+            f'font-family:Plus Jakarta Sans,sans-serif;flex:3;">{ex["title"]}</div>'
+            f'<div style="font-size:12px;color:#7a5540;flex:1.5;text-align:center;">{status}</div>'
+            f'<div style="font-size:12px;font-weight:700;color:#b094d4;flex:1.5;text-align:center;">{score_str}</div>'
+            f'<div style="font-size:12px;color:#7a5540;flex:1;text-align:center;">'
+            f'{"" if not s.get("attempts") else f"{s[chr(97)+chr(116)+chr(116)+chr(101)+chr(109)+chr(112)+chr(116)+chr(115)]} tries"}'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
     st.divider()
 
-    # Overall best achievement
-    best_scores = [
-        s["best_score"]
-        for s in st.session_state.ex_states.values()
-        if s["best_score"] is not None
-    ]
-    if best_scores:
-        best        = max(best_scores)
-        improvement = best - bl["clarity"]
-
-        st.subheader("Best Achievement")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Baseline",            f"{bl['clarity']}%")
-        c2.metric("Best Exercise Score",  f"{best}%",
-                  delta=f"{improvement:+.1f}%", delta_color="normal")
-        c3.metric("Exercises Completed",  f"{completed_count} / {len(EXERCISES)}")
-
-        if improvement > 0:
-            st.success(
-                f"Great work! You have improved by **{improvement:.1f}%** "
-                "since your baseline. Keep going!"
-            )
-        st.divider()
-
-    # ── Score chart ────────────────────────────────────────────────────────
-    st.subheader("Score History")
-    ex_labels  = [f"Ex {ex['id']}\n{ex['title'].split(':')[-1].strip()[:12]}" for ex in EXERCISES]
-    ex_scores  = [st.session_state.ex_states[ex["id"]]["best_score"] or 0 for ex in EXERCISES]
-    ex_done    = [st.session_state.ex_states[ex["id"]]["completed"] for ex in EXERCISES]
-    bar_colors = ["#4a8a4a" if d else ("#6aa86a" if s > 0 else "#a8d8a8")
-                  for s, d in zip(ex_scores, ex_done)]
-
-    fig, ax = plt.subplots(figsize=(8, 3.4), facecolor="#f0f8f0")
-    ax.set_facecolor("#e8f4e8")
-    bars = ax.bar(ex_labels, ex_scores, color=bar_colors, edgecolor="none",
-                  width=0.55, zorder=2)
-    target_values = [_ex_target(ex["id"]) for ex in EXERCISES]
-    ax.plot(ex_labels, target_values, color="#ff6b35", linewidth=1.4,
-            linestyle="--", alpha=0.75, label="Target per exercise", zorder=3)
-    if bl.get("clarity"):
-        ax.axhline(bl["clarity"], color="#4a90e2", linewidth=1.1, linestyle=":",
-                   alpha=0.70, label=f"Baseline {bl['clarity']}%", zorder=3)
-    for bar, score in zip(bars, ex_scores):
-        if score > 0:
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1.5,
-                    f"{score:.0f}%", ha="center", va="bottom",
-                    color="#2d1a0e", fontsize=8.5, fontweight="600")
-    ax.set_ylim(0, 110)
-    ax.set_ylabel("Score (%)", color="#2d1a0e", fontsize=9)
-    ax.tick_params(colors="#2d1a0e", labelsize=8)
-    ax.set_title("Exercise Best Scores", color="#2d1a0e", fontsize=11, fontweight="bold", pad=8)
-    for sp in ax.spines.values():
-        sp.set_edgecolor("#e8f4e8")
-    ax.grid(axis="y", color="#e8f4e8", linewidth=0.6, linestyle="--", alpha=0.7, zorder=1)
-    legend = ax.legend(facecolor="#f0f8f0", edgecolor="#e8f4e8",
-                       labelcolor="#2d1a0e", fontsize=8.5)
-    plt.tight_layout(pad=1.2)
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
-    st.divider()
-
-    # General tips
-    st.subheader("General Speech Tips")
-    for tip in random.sample(GENERAL_TIPS, min(4, len(GENERAL_TIPS))):
+    # ── Tips ─────────────────────────────────────────────────────────────
+    st.markdown('<div class="sec-label">General Tips</div>', unsafe_allow_html=True)
+    for tip in random.sample(GENERAL_TIPS, min(3, len(GENERAL_TIPS))):
         st.markdown(f"- {tip}")
 
 
@@ -4413,6 +4780,86 @@ def page_challenge():
             )
 
 
+def _get_or_create_handle(user_id: int, username: str) -> str:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT handle FROM anon_handles WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+        if row:
+            return row[0]
+        adjectives = [
+            "Swift","Calm","Bold","Clear","Bright",
+            "Gentle","Steady","Fluid","Smooth","Warm",
+            "Keen","Kind","Wise","Pure","Strong"
+        ]
+        animals = [
+            "Fox","Owl","Hawk","Wolf","Bear",
+            "Deer","Swan","Lark","Wren","Crane",
+            "Finch","Dove","Lynx","Hare","Seal"
+        ]
+        import random, hashlib
+        seed = int(hashlib.md5(username.encode()).hexdigest(), 16)
+        random.seed(seed)
+        adj    = random.choice(adjectives)
+        animal = random.choice(animals)
+        number = (seed % 90) + 10
+        handle = f"{adj}{animal}{number}"
+        conn.execute(
+            "INSERT OR IGNORE INTO anon_handles (user_id, handle) VALUES (?,?)",
+            (user_id, handle)
+        )
+        return handle
+
+
+def _get_leaderboard(period: str = "all") -> list:
+    with _db() as conn:
+        users = conn.execute("SELECT id, username FROM users").fetchall()
+        result = []
+        for uid, uname in users:
+            handle = _get_or_create_handle(uid, uname)
+            prog = conn.execute(
+                "SELECT ex_states FROM progress WHERE user_id=?", (uid,)
+            ).fetchone()
+            ex_xp = 0
+            completed = 0
+            if prog and prog[0]:
+                states = json.loads(prog[0])
+                completed = sum(1 for s in states.values()
+                                if isinstance(s, dict) and s.get("completed"))
+                ex_xp = completed * 100
+            if period == "week":
+                from datetime import date, timedelta
+                week_ago = str(date.today() - timedelta(days=7))
+                ch_row = conn.execute(
+                    "SELECT COALESCE(SUM(xp_earned),0) FROM challenges "
+                    "WHERE user_id=? AND challenge_date>=?",
+                    (uid, week_ago)
+                ).fetchone()
+            else:
+                ch_row = conn.execute(
+                    "SELECT COALESCE(SUM(xp_earned),0) FROM challenges WHERE user_id=?",
+                    (uid,)
+                ).fetchone()
+            ch_xp = ch_row[0] if ch_row else 0
+            total = ex_xp + ch_xp
+            streak_row = conn.execute(
+                "SELECT updated_at FROM progress WHERE user_id=?", (uid,)
+            ).fetchone()
+            streak = 1 if streak_row else 0
+            result.append({
+                "user_id":   uid,
+                "handle":    handle,
+                "xp":        total,
+                "completed": completed,
+                "streak":    streak,
+            })
+        result.sort(key=lambda x: x["xp"], reverse=True)
+        for i, r in enumerate(result):
+            r["rank"] = i + 1
+        return result
+
+
 def page_leaderboard():
     user_id = st.session_state.get("user_id")
     uname   = st.session_state.get("username","")
@@ -4627,8 +5074,9 @@ def _load_mood_logs() -> list:
 
 
 def page_mood():
+    import streamlit as st
     st.title("Mood Tracker")
-    
+
     # Mood input form
     with st.form("mood_form"):
         mood_col1, mood_col2 = st.columns(2)
@@ -4641,141 +5089,980 @@ def page_mood():
         with mood_col2:
             stress = st.slider(
                 "Stress Level (1-10)",
-                min_value=1,
-                max_value=10,
-                value=5,
+                min_value=1, max_value=10, value=5,
                 key="stress_input"
             )
-        
+
         notes = st.text_area(
             "Optional notes about your day",
             key="mood_notes",
             placeholder="Anything you want to remember about today..."
         )
-        
+
         submitted = st.form_submit_button("Save Mood", type="primary")
-        
+
         if submitted:
             user_id = st.session_state.get("user_id")
             if user_id:
                 from datetime import date
                 with _db() as conn:
                     conn.execute(
-                        """INSERT INTO mood_logs 
+                        """INSERT INTO mood_logs
                            (user_id, date, mood, stress, notes)
                            VALUES (?, ?, ?, ?, ?)""",
                         (user_id, str(date.today()), mood, stress, notes)
                     )
                 st.success("Mood logged successfully!")
                 st.rerun()
-    
+
     # Display mood history
     st.subheader("Recent Moods")
     mood_logs = _load_mood_logs()
-    
+
     if not mood_logs:
         st.info("No mood logs yet. Start tracking your daily mood!")
     else:
         for log in mood_logs[:10]:
+            notes_html = (
+                f'<div style="font-size:12px;color:#5a3520;margin-top:8px;">'
+                f'{log["notes"]}</div>'
+                if log["notes"] else ""
+            )
             st.markdown(
-                f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;margin-bottom:8px;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">'
+                f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);'
+                f'border-radius:16px;padding:16px 20px;margin-bottom:8px;'
+                f'border:1.5px solid rgba(255,255,255,0.58);'
+                f'box-shadow:0 4px 16px rgba(120,60,20,0.10),'
+                f'0 1px 0 rgba(255,255,255,0.70) inset;">'
+                f'<div style="display:flex;justify-content:space-between;'
+                f'align-items:center;gap:12px;">'
                 f'<div>'
-                f'<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;">{log["mood"]}</div>'
-                f'<div style="font-size:12px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;">{log["date"]}</div>'
+                f'<div style="font-size:14px;font-weight:700;'
+                f'font-family:Plus Jakarta Sans,sans-serif;color:#2d1a0e;">'
+                f'{log["mood"]}</div>'
+                f'<div style="font-size:12px;font-weight:500;'
+                f'font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;">'
+                f'{log["date"]}</div>'
                 f'</div>'
-                f'<div style="display:flex;gap:8px;align-items:center;">'
-                f'<div style="background:rgba(176,148,212,0.20);color:#2d1a0e;padding:4px 14px;border-radius:99px;font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;">Stress: {log["stress"]}/10</div>'
+                f'<div style="background:rgba(176,148,212,0.20);color:#2d1a0e;'
+                f'padding:4px 14px;border-radius:99px;font-size:12px;font-weight:700;'
+                f'font-family:Plus Jakarta Sans,sans-serif;">'
+                f'Stress: {log["stress"]}/10</div>'
                 f'</div>'
-                f'</div>'
-                f'{f"<div style=\'font-size:12px;color:#5a3520;margin-top:8px;\'>{log["notes"]}</div>" if log["notes"] else ""}'
+                + notes_html +
                 f'</div>',
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
 
-
-def page_report():
-    st.title("Therapy Report")
-    
-    user_id = st.session_state.get("user_id")
-    if not user_id:
-        st.warning("Please log in to view your report.")
-        return
-    
-    # Get user data
-    ex_states = st.session_state.get("ex_states", {})
+    # Baseline progress section (safe — checks session state directly)
     baseline = st.session_state.get("baseline")
-    mood_logs = _load_mood_logs()
-    
-    # Calculate statistics
-    completed_exercises = sum(
-        1 for s in ex_states.values()
-        if isinstance(s, dict) and s.get("completed")
-    )
-    
-    avg_clarity = 0
-    if completed_exercises > 0:
+    if baseline and baseline.get("clarity"):
+        baseline_clarity = baseline["clarity"]
+        avg_clarity = 0.0
+        ex_states = st.session_state.get("ex_states", {})
         scores = [
-            s.get("best_score", 0) 
+            s.get("best_score", 0)
             for s in ex_states.values()
             if isinstance(s, dict) and s.get("best_score")
         ]
-        avg_clarity = sum(scores) / len(scores) if scores else 0
-    
-    # Report header
-    st.markdown(
-        f'<div style="background:linear-gradient(135deg,rgba(45,26,14,0.82),rgba(80,40,10,0.88));backdrop-filter:blur(24px);border-radius:28px;padding:28px 36px;margin-bottom:24px;border:1.5px solid rgba(255,180,100,0.40);box-shadow:0 0 40px rgba(196,112,58,0.25),0 0 80px rgba(196,112,58,0.12);">'
-        f'<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;letter-spacing:3px;color:rgba(240,160,96,0.80);text-transform:uppercase;margin-bottom:6px;">Progress Summary</div>'
-        f'<div style="font-size:28px;font-weight:900;font-family:Playfair Display,serif;background:linear-gradient(90deg,#ffe0b0,#ffb870);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1;">Your Journey</div>'
-        f'<div style="font-size:14px;font-weight:600;font-family:Plus Jakarta Sans,sans-serif;color:rgba(255,220,180,0.85);margin-top:8px;">Keep up the great work!</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    
-    # Stats cards
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown(
-            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;text-align:center;">'
-            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#c4703a;">{completed_exercises}</div>'
-            f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Completed Exercises</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    
-    with col2:
-        st.markdown(
-            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;text-align:center;">'
-            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#70c890;">{avg_clarity:.1f}%</div>'
-            f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Average Clarity</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    
-    with col3:
-        st.markdown(
-            f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(20px);border-radius:24px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);box-shadow:0 2px 4px rgba(120,60,20,0.08),0 8px 20px rgba(120,60,20,0.14),0 24px 48px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;text-align:center;">'
-            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;color:#b094d4;">{len(mood_logs)}</div>'
-            f'<div style="font-size:12px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;color:#7a5540;text-transform:uppercase;letter-spacing:1px;">Mood Entries</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    
-    # Baseline comparison
-    if baseline and baseline.get("clarity"):
-        baseline_clarity = baseline["clarity"]
+        if scores:
+            avg_clarity = sum(scores) / len(scores)
+
         st.subheader("Baseline Progress")
+        if avg_clarity > baseline_clarity:
+            imp_html = (
+                f'<strong style="color:#70c890;">'
+                f'Improvement: +{avg_clarity - baseline_clarity:.1f}%</strong>'
+            )
+        else:
+            imp_html = ""
         st.markdown(
-            f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);border-radius:16px;padding:16px 20px;border:1.5px solid rgba(255,255,255,0.58);box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
-            f'<div style="font-size:14px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;">'
+            f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);'
+            f'border-radius:16px;padding:16px 20px;'
+            f'border:1.5px solid rgba(255,255,255,0.58);'
+            f'box-shadow:0 4px 16px rgba(120,60,20,0.10),'
+            f'0 1px 0 rgba(255,255,255,0.70) inset;">'
+            f'<div style="font-size:14px;font-weight:500;'
+            f'font-family:Plus Jakarta Sans,sans-serif;color:#5a3520;">'
             f'Your baseline clarity was <strong>{baseline_clarity:.1f}%</strong>. '
             f'Current average: <strong>{avg_clarity:.1f}%</strong>. '
-            f'<strong style="color: #70c890;">Improvement: {avg_clarity - baseline_clarity:.1f}%</strong>' if avg_clarity > baseline_clarity else ''
+            f'{imp_html}'
             f'</div>'
             f'</div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPORT PAGE HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_all_sessions() -> list:
+    """Pull every challenge row for the current user, ordered oldest-first."""
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return []
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT challenge_date, challenge_type, score, xp_earned, completed
+               FROM challenges WHERE user_id = ?
+               ORDER BY challenge_date ASC""",
+            (user_id,),
+        ).fetchall()
+    return [{"date": r[0], "type": r[1], "score": r[2] or 0,
+             "xp": r[3] or 0, "completed": r[4]} for r in rows]
+
+
+def _compute_milestones(ex_states: dict, sessions: list) -> list:
+    milestones = []
+    completed_list = sorted([(i, s) for i, s in ex_states.items()
+                              if s.get("completed")], key=lambda x: x[0])
+    total_completed = len(completed_list)
+
+    if completed_list:
+        idx, _ = completed_list[0]
+        milestones.append({"icon": "🏅", "label": "First Exercise Completed",
+            "detail": f"Level {idx+1} — {EXERCISES[idx]['title'].split(':')[-1].strip()}",
+            "date": "—", "color": "#90bcd4"})
+
+    for i in range(14):
+        s = ex_states.get(i, {})
+        if s.get("best_score") and s["best_score"] >= 70:
+            milestones.append({"icon": "⭐", "label": "First 70%+ Clarity Score",
+                "detail": f"Reached on Level {i+1}: {s['best_score']:.0f}%",
+                "date": "—", "color": "#e8c060"})
+            break
+
+    for i in range(14):
+        s = ex_states.get(i, {})
+        if s.get("best_score") and s["best_score"] >= 80:
+            milestones.append({"icon": "🌟", "label": "First 80%+ Clarity Score",
+                "detail": f"Fully Fluent threshold — Level {i+1}: {s['best_score']:.0f}%",
+                "date": "—", "color": "#70c890"})
+            break
+
+    if total_completed >= 5:
+        milestones.append({"icon": "🎯", "label": "5 Exercises Completed",
+            "detail": "Halfway through the structured programme",
+            "date": "—", "color": "#b094d4"})
+    if total_completed >= 10:
+        milestones.append({"icon": "🔥", "label": "10 Exercises Completed",
+            "detail": "Advanced tier reached — top-level exercises unlocked",
+            "date": "—", "color": "#f0a060"})
+    if total_completed == 14:
+        milestones.append({"icon": "🏆", "label": "Programme Complete!",
+            "detail": "All 14 structured exercises successfully mastered",
+            "date": "—", "color": "#f0c060"})
+
+    completed_sessions = [s for s in sessions if s.get("completed")]
+    if completed_sessions:
+        c = completed_sessions[0]
+        milestones.append({"icon": "⚡", "label": "First Daily Challenge",
+            "detail": f"{c['type']} — Score: {c['score']:.0f}%",
+            "date": c.get("date", "—"), "color": "#90bcd4"})
+    if len(completed_sessions) >= 7:
+        milestones.append({"icon": "🗓️", "label": "7 Challenges Completed",
+            "detail": f"Total challenge XP: {sum(s['xp'] for s in completed_sessions)}",
+            "date": completed_sessions[6].get("date", "—"), "color": "#80d8f8"})
+    if len(completed_sessions) >= 30:
+        milestones.append({"icon": "💎", "label": "30 Challenges Completed",
+            "detail": "One month of consistent daily practice",
+            "date": completed_sessions[29].get("date", "—"), "color": "#c0d8ff"})
+
+    total_attempts = sum(s.get("attempts", 0) for s in ex_states.values()
+                         if isinstance(s, dict))
+    if total_attempts >= 25:
+        milestones.append({"icon": "💪", "label": "25 Practice Attempts",
+            "detail": "Dedication milestone — neural pathways are forming",
+            "date": "—", "color": "#c4703a"})
+    if total_attempts >= 100:
+        milestones.append({"icon": "🚀", "label": "100 Practice Attempts",
+            "detail": "Elite dedication — speech fluency deeply reinforced",
+            "date": "—", "color": "#c4703a"})
+    return milestones
+
+
+def _therapy_summary_text(uname, baseline_clarity, best_score, avg_score,
+                           completed_count, total_attempts,
+                           pause_events, prolong_events, rep_events,
+                           mood_logs, streak) -> str:
+    from datetime import date as _d
+    today_str = _d.today().strftime("%B %d, %Y")
+    name = uname.title() if uname else "the patient"
+
+    if baseline_clarity is None:
+        bl_para = "No baseline assessment has been recorded yet."
+    elif baseline_clarity >= 80:
+        bl_para = (f"Baseline assessment recorded a clarity score of {baseline_clarity:.1f}%, "
+            "indicating predominantly fluent speech with minimal disfluency at the point of intake.")
+    elif baseline_clarity >= 60:
+        bl_para = (f"Baseline assessment recorded a clarity score of {baseline_clarity:.1f}%, "
+            "consistent with mild-to-moderate stuttering characterised by intermittent disfluencies.")
+    else:
+        bl_para = (f"Baseline assessment recorded a clarity score of {baseline_clarity:.1f}%, "
+            "indicating significant disfluency at the point of intake.")
+
+    stutter_counts = {"pauses and blocks": pause_events,
+                      "sound prolongations": prolong_events,
+                      "word repetitions": rep_events}
+    dominant_type = max(stutter_counts, key=stutter_counts.get)
+    dominant_count = stutter_counts[dominant_type]
+    if dominant_count > 0:
+        stutter_para = (f"Stutter profile analysis identifies {dominant_type} as the predominant "
+            f"disfluency type ({dominant_count} events at baseline).")
+    else:
+        stutter_para = "No dominant stutter type was identified at baseline."
+
+    if completed_count == 0 or best_score is None:
+        prog_para = (f"{name.title()} has not yet completed any structured exercises. "
+            "It is recommended to begin with Level 1 (Warm-Up: Smooth Airflow).")
+    else:
+        improvement = (best_score - baseline_clarity) if baseline_clarity else 0
+        direction = "improvement" if improvement >= 0 else "regression"
+        prog_para = (f"Over {total_attempts} recorded practice attempts, {name.title()} has completed "
+            f"{completed_count} of 14 structured exercises. Best recorded clarity score: "
+            f"{best_score:.1f}% — a {abs(improvement):.1f}-point {direction} from baseline.")
+
+    if streak >= 7:
+        cons_para = (f"Practice consistency is excellent — current streak of {streak} consecutive "
+            "days reflects strong therapeutic engagement.")
+    elif streak >= 3:
+        cons_para = (f"Practice consistency is developing — {streak}-day active streak. "
+            "Sustained daily practice of 10–15 minutes is strongly encouraged.")
+    else:
+        cons_para = ("Consistency data indicates irregular practice intervals. "
+            "Daily sessions — even as short as 10 minutes — produce superior outcomes.")
+
+    if mood_logs:
+        avg_stress = sum(l["stress"] for l in mood_logs) / len(mood_logs)
+        if avg_stress <= 3:
+            mood_para = (f"Mood tracking across {len(mood_logs)} entries indicates a low average "
+                f"stress level ({avg_stress:.1f}/10) — optimal for fluency development.")
+        elif avg_stress <= 6:
+            mood_para = (f"Mood tracking across {len(mood_logs)} entries indicates moderate average "
+                f"stress ({avg_stress:.1f}/10). Mindfulness and relaxation practices are recommended.")
+        else:
+            mood_para = (f"Mood tracking across {len(mood_logs)} entries indicates elevated average "
+                f"stress ({avg_stress:.1f}/10). Addressing stress management is strongly advised.")
+    else:
+        mood_para = ("No mood data has been recorded. Daily mood logging is encouraged, as stress "
+            "is a well-documented exacerbating factor for stuttering.")
+
+    if completed_count == 0:
+        rec = ("Begin the structured exercise programme immediately, starting with Level 1. "
+            "Record at least one exercise attempt per day.")
+    elif completed_count < 7:
+        rec = ("Continue systematic progression through the exercise programme. "
+            "Introduce brief real-world speaking challenges to begin generalising therapy gains.")
+    else:
+        rec = ("Excellent documented progress. Transition toward maintenance phase: continue daily "
+            "Shadowing and Challenge exercises, and actively seek real-world speaking opportunities.")
+
+    return (
+        f"Prepared: {today_str}\nPatient: {name.title()}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "INTAKE ASSESSMENT\n\n"
+        f"{bl_para}\n\n{stutter_para}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "PROGRESS TO DATE\n\n"
+        f"{prog_para}\n\n{cons_para}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "PSYCHOLOGICAL & WELLBEING FACTORS\n\n"
+        f"{mood_para}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "RECOMMENDATION\n\n"
+        f"{rec}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "This report is auto-generated by Stutter Clarity Coach and does not\n"
+        "substitute for assessment by a certified speech-language pathologist."
+    )
+
+
+def _build_pdf(uname, summary_text, baseline_clarity, best_score, avg_score,
+               completed_count, total_attempts, pause_events, prolong_events,
+               rep_events, mood_logs, milestones, ex_states, sessions) -> bytes:
+    import io as _io
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from datetime import date as _d, timedelta as _td
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors as rl_colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                     Table, TableStyle, HRFlowable, PageBreak,
+                                     Image as RLImage)
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm,
+        title="Stutter Clarity Coach — Therapy Report")
+
+    PURPLE = rl_colors.HexColor("#7c5cbf")
+    BLUE   = rl_colors.HexColor("#4a90c4")
+    GREEN  = rl_colors.HexColor("#4caf8a")
+    LIGHT  = rl_colors.HexColor("#f5f2ff")
+    MUTED  = rl_colors.HexColor("#7a5a40")
+    DARK   = rl_colors.HexColor("#2d1a0e")
+
+    ss = getSampleStyleSheet()
+    def _ps(name, parent="Normal", **kw):
+        return ParagraphStyle(name, parent=ss[parent], **kw)
+
+    title_s = _ps("T","Title",fontSize=20,textColor=PURPLE,spaceAfter=4)
+    sub_s   = _ps("S","Normal",fontSize=9,textColor=MUTED,spaceAfter=10)
+    h1_s    = _ps("H1","Heading1",fontSize=12,textColor=PURPLE,spaceBefore=12,spaceAfter=5)
+    body_s  = _ps("B","Normal",fontSize=9,textColor=DARK,spaceAfter=5,leading=15)
+    cap_s   = _ps("C","Normal",fontSize=7.5,textColor=MUTED,spaceAfter=8,alignment=1)
+
+    def _fig_bytes(fig):
+        fb = _io.BytesIO()
+        fig.savefig(fb, format="png", dpi=150, bbox_inches="tight", facecolor="white")
+        fb.seek(0); plt.close(fig); return fb
+
+    story = []
+    story.append(Spacer(1, 0.3*cm))
+    story.append(Paragraph("Stutter Clarity Coach", title_s))
+    story.append(Paragraph("Personalised Speech Therapy Report", sub_s))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=PURPLE, spaceAfter=12))
+
+    stat_data = [["Metric","Value"],
+        ["Patient",             uname.title() if uname else "—"],
+        ["Report Date",         _d.today().strftime("%B %d, %Y")],
+        ["Baseline Clarity",    f"{baseline_clarity:.1f}%" if baseline_clarity else "Not recorded"],
+        ["Best Score",          f"{best_score:.1f}%" if best_score else "—"],
+        ["Average Score",       f"{avg_score:.1f}%" if avg_score else "—"],
+        ["Exercises Completed", f"{completed_count} / 14"],
+        ["Total Attempts",      str(total_attempts)],
+        ["Mood Entries",        str(len(mood_logs))]]
+    t = Table(stat_data, colWidths=[5*cm, 10*cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),PURPLE),("TEXTCOLOR",(0,0),(-1,0),rl_colors.white),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1),[LIGHT,rl_colors.white]),
+        ("TEXTCOLOR",(0,1),(0,-1),MUTED),("FONTNAME",(0,1),(0,-1),"Helvetica-Bold"),
+        ("TEXTCOLOR",(1,1),(-1,-1),DARK),
+        ("GRID",(0,0),(-1,-1),0.4,rl_colors.HexColor("#ddd0f0")),
+        ("ROWHEIGHT",(0,0),(-1,-1),18),
+        ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+        ("LEFTPADDING",(0,0),(-1,-1),8)]))
+    story.append(t)
+    story.append(Spacer(1, 0.4*cm))
+
+    story.append(Paragraph("Clinical Summary", h1_s))
+    for line in summary_text.split("\n"):
+        s = line.strip()
+        if not s:
+            story.append(Spacer(1,3))
+        elif s.startswith("━"):
+            story.append(HRFlowable(width="100%",thickness=0.4,
+                color=rl_colors.HexColor("#ccc0e0"),spaceAfter=5))
+        elif s.isupper() and len(s) < 40:
+            story.append(Paragraph(s, _ps("SH","Normal",fontSize=9,textColor=PURPLE,
+                fontName="Helvetica-Bold",spaceBefore=8,spaceAfter=3)))
+        else:
+            story.append(Paragraph(s, body_s))
+
+    story.append(PageBreak())
+
+    # Chart 1: Exercise scores
+    story.append(Paragraph("Exercise Score History", h1_s))
+    ex_labels = [f"L{i+1}" for i in range(14)]
+    ex_scores = [ex_states.get(i,{}).get("best_score") or 0 for i in range(14)]
+    targets   = [_ex_target(i) for i in range(14)]
+    fig1, ax1 = plt.subplots(figsize=(10,3.2),facecolor="white")
+    bar_c = ["#7c5cbf" if s > 0 else "#e8e0f4" for s in ex_scores]
+    ax1.bar(ex_labels,ex_scores,color=bar_c,width=0.55,edgecolor="white",linewidth=0.5)
+    ax1.plot(ex_labels,targets,color="#d4a020",linewidth=1.5,linestyle="--",
+             marker="o",markersize=3,label="Target")
+    if baseline_clarity:
+        ax1.axhline(baseline_clarity,color="#4a90c4",linewidth=1.2,linestyle=":",
+                    label=f"Baseline {baseline_clarity:.0f}%")
+    ax1.set_ylim(0,110); ax1.set_ylabel("Score (%)",fontsize=7); ax1.tick_params(labelsize=7)
+    ax1.legend(fontsize=7)
+    for sp in ax1.spines.values(): sp.set_visible(False)
+    ax1.grid(axis="y",linewidth=0.3,alpha=0.3); fig1.tight_layout(pad=0.6)
+    story.append(RLImage(_fig_bytes(fig1), width=16*cm))
+    story.append(Paragraph("Fig 1 — Best score per exercise level vs target threshold", cap_s))
+    story.append(Spacer(1, 0.3*cm))
+
+    # Chart 2: Stutter profile
+    story.append(Paragraph("Stutter Profile (Baseline)", h1_s))
+    import numpy as np
+    cats  = ["Pauses / Blocks","Prolongations","Repetitions"]
+    vals  = [pause_events, prolong_events, rep_events]
+    fig2, ax2 = plt.subplots(figsize=(7,2.8),facecolor="white")
+    bars2 = ax2.bar(cats,vals,color=["#4a90c4","#d4a020","#c45060"],width=0.45,edgecolor="white")
+    for bar, v in zip(bars2,vals):
+        if v > 0:
+            ax2.text(bar.get_x()+bar.get_width()/2,bar.get_height()+0.1,
+                     str(v),ha="center",fontsize=8,fontweight="bold")
+    ax2.set_ylabel("Events",fontsize=7); ax2.tick_params(labelsize=8)
+    for sp in ax2.spines.values(): sp.set_visible(False)
+    ax2.grid(axis="y",linewidth=0.3,alpha=0.3); fig2.tight_layout(pad=0.6)
+    story.append(RLImage(_fig_bytes(fig2), width=12*cm))
+    story.append(Paragraph("Fig 2 — Stutter event counts at baseline assessment", cap_s))
+
+    story.append(PageBreak())
+
+    # Chart 3: Weekly consistency
+    story.append(Paragraph("Weekly Practice Consistency (Last 8 Weeks)", h1_s))
+    today2 = _d.today()
+    wlabels, wvals = [], []
+    for w in range(7,-1,-1):
+        wstart = today2 - _td(days=today2.weekday()) - _td(weeks=w)
+        wend   = wstart + _td(days=6)
+        lbl    = wstart.strftime("%b %d")
+        days_n = 0
+        for s in sessions:
+            try:
+                sd = _d.fromisoformat(s["date"])
+                if wstart <= sd <= wend: days_n += 1
+            except Exception: pass
+        wlabels.append(lbl); wvals.append(min(days_n, 7))
+    wcolors = ["#4caf8a" if v>=5 else "#e8c060" if v>=3 else "#f0a080" if v>=1 else "#e0d8f0"
+               for v in wvals]
+    fig3, ax3 = plt.subplots(figsize=(10,2.8),facecolor="white")
+    bars3 = ax3.bar(wlabels,wvals,color=wcolors,width=0.5,edgecolor="white")
+    ax3.axhline(5,color="#7c5cbf",linewidth=1.2,linestyle="--",alpha=0.7,label="5-day target")
+    for bar, v in zip(bars3,wvals):
+        if v > 0:
+            ax3.text(bar.get_x()+bar.get_width()/2,bar.get_height()+0.07,f"{v}d",
+                     ha="center",fontsize=7,fontweight="bold")
+    ax3.set_ylim(0,8); ax3.set_yticks(range(8))
+    ax3.set_yticklabels([f"{i}d" for i in range(8)],fontsize=7)
+    ax3.tick_params(axis="x",labelsize=7); ax3.set_ylabel("Days Active",fontsize=7)
+    ax3.legend(fontsize=7)
+    for sp in ax3.spines.values(): sp.set_visible(False)
+    ax3.grid(axis="y",linewidth=0.3,alpha=0.3); fig3.tight_layout(pad=0.6)
+    story.append(RLImage(_fig_bytes(fig3), width=16*cm))
+    story.append(Paragraph("Fig 3 — Days with recorded practice activity per calendar week", cap_s))
+    story.append(Spacer(1, 0.3*cm))
+
+    # Chart 4: Mood scatter
+    if mood_logs:
+        story.append(Paragraph("Mood vs Stress (Logged Days)", h1_s))
+        mood_map = {"😊 Great":5,"🙂 Good":4,"😐 Okay":3,"😕 Low":2,"😢 Struggling":1}
+        stress_v = [l["stress"] for l in mood_logs]
+        mood_v   = [mood_map.get(l["mood"],3) for l in mood_logs]
+        fig4, ax4 = plt.subplots(figsize=(7,3),facecolor="white")
+        sc = ax4.scatter(stress_v,mood_v,c=stress_v,cmap="RdYlGn_r",
+                          s=55,alpha=0.7,edgecolors="white",linewidths=0.5)
+        if len(stress_v) >= 3:
+            z = np.polyfit(stress_v,mood_v,1); xs = np.linspace(min(stress_v),max(stress_v),80)
+            ax4.plot(xs,np.poly1d(z)(xs),color="#7c5cbf",linewidth=1.4,linestyle="--",label="Trend")
+        ax4.set_xlabel("Stress Level (1–10)",fontsize=8)
+        ax4.set_ylabel("Mood Score",fontsize=8)
+        ax4.set_yticks([1,2,3,4,5])
+        ax4.set_yticklabels(["Struggling","Low","Okay","Good","Great"],fontsize=7)
+        ax4.tick_params(axis="x",labelsize=7)
+        for sp in ax4.spines.values(): sp.set_visible(False)
+        ax4.grid(linewidth=0.3,alpha=0.3)
+        plt.colorbar(sc,ax=ax4,shrink=0.75).ax.tick_params(labelsize=7)
+        if len(stress_v) >= 3: ax4.legend(fontsize=7)
+        fig4.tight_layout(pad=0.6)
+        story.append(RLImage(_fig_bytes(fig4), width=12*cm))
+        story.append(Paragraph("Fig 4 — Each dot is one mood log; green=low stress, red=high stress", cap_s))
+        story.append(Spacer(1, 0.3*cm))
+
+    # Milestones table
+    story.append(Paragraph("Therapy Milestones", h1_s))
+    if milestones:
+        mdata = [["Milestone","Detail","Date"]]
+        for m in milestones:
+            mdata.append([m["icon"]+" "+m["label"], m["detail"], m.get("date","—")])
+        mt = Table(mdata, colWidths=[5.5*cm, 8*cm, 2.5*cm])
+        mt.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),PURPLE),("TEXTCOLOR",(0,0),(-1,0),rl_colors.white),
+            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[LIGHT,rl_colors.white]),
+            ("TEXTCOLOR",(0,1),(-1,-1),DARK),
+            ("GRID",(0,0),(-1,-1),0.3,rl_colors.HexColor("#ddd0f0")),
+            ("ROWHEIGHT",(0,0),(-1,-1),17),
+            ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
+            ("LEFTPADDING",(0,0),(-1,-1),7)]))
+        story.append(mt)
+    else:
+        story.append(Paragraph("No milestones earned yet.", body_s))
+
+    story.append(Spacer(1, 0.4*cm))
+
+    # Exercise history table
+    story.append(Paragraph("Exercise History", h1_s))
+    edata = [["#","Exercise","Status","Best","Attempts"]]
+    for i in range(14):
+        s = ex_states.get(i,{})
+        status = ("Complete" if s.get("completed") else
+                  "In Progress" if s.get("attempts",0)>0 else
+                  "Unlocked" if s.get("unlocked") else "Locked")
+        edata.append([str(i+1), EXERCISES[i]["title"].split(":")[-1].strip(),
+                       status,
+                       f"{s['best_score']:.0f}%" if s.get("best_score") else "—",
+                       str(s.get("attempts",0))])
+    et = Table(edata, colWidths=[0.8*cm, 7.2*cm, 2.8*cm, 2.2*cm, 2*cm])
+    et.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),BLUE),("TEXTCOLOR",(0,0),(-1,0),rl_colors.white),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7.5),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1),[LIGHT,rl_colors.white]),
+        ("TEXTCOLOR",(0,1),(-1,-1),DARK),
+        ("GRID",(0,0),(-1,-1),0.3,rl_colors.HexColor("#d0e8f0")),
+        ("ROWHEIGHT",(0,0),(-1,-1),15),
+        ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
+        ("LEFTPADDING",(0,0),(-1,-1),6)]))
+    for row_i in range(1,15):
+        if ex_states.get(row_i-1,{}).get("completed"):
+            et.setStyle(TableStyle([("TEXTCOLOR",(2,row_i),(2,row_i),GREEN),
+                                     ("FONTNAME",(2,row_i),(2,row_i),"Helvetica-Bold")]))
+    story.append(et)
+
+    story.append(Spacer(1, 0.6*cm))
+    story.append(HRFlowable(width="100%",thickness=0.5,
+                              color=rl_colors.HexColor("#ccc0e0"),spaceAfter=5))
+    story.append(Paragraph(
+        "Generated by Stutter Clarity Coach · Not a substitute for clinical assessment · Personal use only",
+        cap_s))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE: REPORT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def page_report():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from datetime import date, timedelta
+
+    # ── Data ──────────────────────────────────────────────────────────────
+    user_id          = st.session_state.get("user_id")
+    uname            = st.session_state.get("username", "")
+    ex_states        = st.session_state.get("ex_states", {})
+    baseline         = st.session_state.get("baseline")
+    mood_logs        = _load_mood_logs()
+    sessions         = _load_all_sessions()
+    streak           = _get_streak()
+
+    baseline_clarity = baseline["clarity"] if baseline else None
+    pause_events     = baseline["result"].get("pause_events", 0) if baseline else 0
+    prolong_events   = baseline["result"].get("prolongation_events", 0) if baseline else 0
+    rep_events       = baseline["result"].get("repetition_events", 0) if baseline else 0
+
+    best_scores     = [s["best_score"] for s in ex_states.values() if s.get("best_score")]
+    completed_count = sum(1 for s in ex_states.values() if s.get("completed"))
+    total_attempts  = sum(s.get("attempts", 0) for s in ex_states.values()
+                         if isinstance(s, dict))
+    best_score      = max(best_scores) if best_scores else None
+    avg_score       = round(sum(best_scores)/len(best_scores), 1) if best_scores else 0.0
+
+    milestones   = _compute_milestones(ex_states, sessions)
+    summary_text = _therapy_summary_text(
+        uname, baseline_clarity, best_score, avg_score,
+        completed_count, total_attempts,
+        pause_events, prolong_events, rep_events,
+        mood_logs, streak)
+
+    # ── Header ────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="background:linear-gradient(135deg,'
+        'rgba(124,92,191,0.58),rgba(74,144,196,0.58));'
+        'backdrop-filter:blur(24px);border-radius:28px;padding:28px 36px;'
+        'margin-bottom:24px;border:1.5px solid rgba(200,180,255,0.50);'
+        'box-shadow:0 0 40px rgba(124,92,191,0.20);">'
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:rgba(220,200,255,0.85);text-transform:uppercase;margin-bottom:6px;">'
+        'Speech Therapy</div>'
+        '<div style="font-size:28px;font-weight:900;font-family:Playfair Display,serif;'
+        'background:linear-gradient(90deg,#e0d0ff,#b094d4,#90c8f0);'
+        '-webkit-background-clip:text;-webkit-text-fill-color:transparent;'
+        'background-clip:text;line-height:1.1;margin-bottom:8px;">Personalised Report</div>'
+        '<div style="font-size:13px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;'
+        'color:rgba(255,240,220,0.85);">'
+        'Consistency charts · Stutter trends · Mood correlation · '
+        'Milestones · Written summary · Downloadable PDF</div>'
+        '</div>',
+        unsafe_allow_html=True)
+
+    if not baseline:
+        st.warning("No baseline recorded yet. Go to **Home** and record your first "
+                   "assessment to unlock the full report.")
+        return
+
+    # ══ 1. KPI CARDS ══════════════════════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'At a Glance</div>', unsafe_allow_html=True)
+
+    def _kpi(col, val, label, sub, color):
+        col.markdown(
+            f'<div style="background:rgba(255,255,255,0.42);backdrop-filter:blur(18px);'
+            f'border-radius:22px;padding:22px 16px;text-align:center;'
+            f'border:1.5px solid rgba(255,255,255,0.65);'
+            f'box-shadow:0 8px 24px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.80) inset;">'
+            f'<div style="font-size:36px;font-weight:900;font-family:Playfair Display,serif;'
+            f'color:{color};line-height:1;">{val}</div>'
+            f'<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+            f'color:#7a5540;text-transform:uppercase;letter-spacing:1px;margin-top:6px;">{label}</div>'
+            f'<div style="font-size:11px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;'
+            f'color:#a08060;margin-top:3px;">{sub}</div>'
+            f'</div>', unsafe_allow_html=True)
+
+    imp = f"{best_score - baseline_clarity:+.1f}% vs baseline" \
+          if best_score and baseline_clarity else "—"
+    c1, c2, c3, c4 = st.columns(4)
+    _kpi(c1, f"{baseline_clarity:.0f}%", "Baseline",       "Starting clarity",      "#90bcd4")
+    _kpi(c2, f"{best_score:.0f}%" if best_score else "—",
+             "Best Score",   imp,                                                      "#b094d4")
+    _kpi(c3, f"{completed_count}/14",    "Exercises Done",  f"{total_attempts} attempts","#70c890")
+    _kpi(c4, f"{streak}d",               "Streak",          "Consecutive days",       "#e8c060")
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ══ 2. WEEKLY CONSISTENCY CHART ═══════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'Weekly Practice Consistency</div>', unsafe_allow_html=True)
+
+    today = date.today()
+    week_labels, week_vals = [], []
+    for w in range(7, -1, -1):
+        wstart = today - timedelta(days=today.weekday()) - timedelta(weeks=w)
+        wend   = wstart + timedelta(days=6)
+        count  = sum(1 for s in sessions
+                     if _safe_date(s["date"]) and wstart <= _safe_date(s["date"]) <= wend)
+        week_labels.append(wstart.strftime("%b %d"))
+        week_vals.append(min(count, 7))
+
+    w_colors = ["#70c890" if v>=5 else "#e8c060" if v>=3 else
+                "#f0a080" if v>=1 else "#ddd0f0" for v in week_vals]
+
+    fig_w, ax_w = plt.subplots(figsize=(12, 3.5), facecolor="none")
+    ax_w.set_facecolor((1,1,1,0)); fig_w.patch.set_alpha(0)
+    bars_w = ax_w.bar(week_labels, week_vals, color=w_colors,
+                       edgecolor="white", linewidth=0.8, width=0.5, zorder=2)
+    ax_w.axhline(5, color="#b094d4", linewidth=1.3, linestyle="--",
+                  alpha=0.75, label="5-day target", zorder=3)
+    for bar, v in zip(bars_w, week_vals):
+        if v > 0:
+            ax_w.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.08,
+                       f"{v}d", ha="center", va="bottom",
+                       fontsize=9, fontweight="700", color="#2d1a0e")
+    ax_w.set_ylim(0,8); ax_w.set_yticks(range(8))
+    ax_w.set_yticklabels([f"{i}d" for i in range(8)], fontsize=8, color="#7a5540")
+    ax_w.tick_params(axis="x", colors="#7a5540", labelsize=8)
+    ax_w.set_ylabel("Days Active", color="#7a5540", fontsize=9)
+    for sp in ax_w.spines.values(): sp.set_visible(False)
+    ax_w.grid(axis="y", linewidth=0.5, linestyle="--", color="#c4a0d8", alpha=0.25, zorder=1)
+    ax_w.legend(fontsize=8, facecolor="white", framealpha=0.6, labelcolor="#7a5540")
+    fig_w.tight_layout(pad=0.8)
+    st.pyplot(fig_w, use_container_width=True); plt.close(fig_w)
+
+    avg_days = sum(week_vals) / max(len(week_vals),1)
+    if avg_days >= 5:
+        bc, bi, bm = "#70c890","🟢",f"Excellent — {avg_days:.1f} days/week. Strong daily habit."
+    elif avg_days >= 3:
+        bc, bi, bm = "#e8c060","🟡",f"Good — {avg_days:.1f} days/week. One more session per week moves you to Excellent."
+    else:
+        bc, bi, bm = "#d4849a","🔴",f"Irregular — {avg_days:.1f} days/week. Daily 10-min sessions beat long infrequent ones."
+    st.markdown(
+        f'<div style="background:{bc}22;border-radius:14px;padding:12px 18px;'
+        f'border:1.5px solid {bc}55;margin-top:8px;">'
+        f'<span style="font-size:13px;font-weight:600;color:#3a2010;'
+        f'font-family:Plus Jakarta Sans,sans-serif;">{bi} {bm}</span></div>',
+        unsafe_allow_html=True)
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ══ 3. STUTTER TYPE PROFILE ════════════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'Stutter Type Profile</div>', unsafe_allow_html=True)
+
+    col_chart, col_cards = st.columns([1,1])
+    with col_chart:
+        cats  = ["Pauses\n/ Blocks","Prolongations","Repetitions"]
+        vals  = [pause_events, prolong_events, rep_events]
+        scolors = ["#90bcd4","#e8c060","#d4849a"]
+        fig_s, ax_s = plt.subplots(figsize=(5.5,4), facecolor="none")
+        ax_s.set_facecolor((1,1,1,0)); fig_s.patch.set_alpha(0)
+        hbars = ax_s.barh(cats, vals, color=scolors, edgecolor="white",
+                           linewidth=0.8, height=0.42, zorder=2)
+        for bar, v in zip(hbars, vals):
+            ax_s.text(bar.get_width()+0.04, bar.get_y()+bar.get_height()/2,
+                       f"  {v}", va="center", fontsize=10, fontweight="800", color="#2d1a0e")
+        max_v = max(vals) if any(vals) else 1
+        ax_s.set_xlim(0, max_v*1.5+1)
+        ax_s.tick_params(colors="#7a5540", labelsize=9)
+        for sp in ax_s.spines.values(): sp.set_visible(False)
+        ax_s.grid(axis="x", linewidth=0.4, linestyle="--", color="#c4a0d8", alpha=0.25)
+        ax_s.set_title("Baseline stutter events", color="#5a3520", fontsize=9, pad=8)
+        fig_s.tight_layout(pad=0.8)
+        st.pyplot(fig_s, use_container_width=True); plt.close(fig_s)
+
+    with col_cards:
+        def _sev_card(count, label, color, icon):
+            sev, sc = (("None detected","#70c890") if count==0 else
+                       ("Mild","#90bcd4") if count<=2 else
+                       ("Moderate","#e8c060") if count<=5 else
+                       ("Frequent","#d4849a"))
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.38);backdrop-filter:blur(14px);'
+                f'border-radius:16px;padding:14px 18px;margin-bottom:10px;'
+                f'border:1.5px solid rgba(255,255,255,0.60);border-left:4px solid {color};'
+                f'box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                f'<div>'
+                f'<div style="font-size:13px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;'
+                f'color:#2d1a0e;">{icon} {label}</div>'
+                f'<div style="font-size:22px;font-weight:900;font-family:Playfair Display,serif;'
+                f'color:{color};margin-top:2px;">{count} events</div>'
+                f'</div>'
+                f'<div style="background:{sc}22;color:{sc};padding:4px 12px;'
+                f'border-radius:99px;font-size:11px;font-weight:800;'
+                f'font-family:Plus Jakarta Sans,sans-serif;border:1px solid {sc}50;">{sev}</div>'
+                f'</div></div>', unsafe_allow_html=True)
+        _sev_card(pause_events,   "Pauses / Blocks",  "#90bcd4", "⏸")
+        _sev_card(prolong_events, "Prolongations",     "#e8c060", "〰️")
+        _sev_card(rep_events,     "Repetitions",       "#d4849a", "🔁")
+
+    # Dominant stutter insight
+    stutter_tips = {
+        "Pauses / Blocks":  ("#90bcd4","Focus on gentle airflow and avoiding breath-holds before words."),
+        "Prolongations":    ("#e8c060","Focus on light contacts — tongue and lips barely touching."),
+        "Repetitions":      ("#d4849a","Focus on easy onset — begin each word on a breath, not a push."),
+    }
+    dom_pairs = [("Pauses / Blocks",pause_events),
+                 ("Prolongations",prolong_events),
+                 ("Repetitions",rep_events)]
+    dom_label, dom_val = max(dom_pairs, key=lambda x: x[1])
+    if dom_val > 0:
+        dom_color, dom_tip = stutter_tips[dom_label]
+        st.markdown(
+            f'<div style="background:{dom_color}18;border-radius:14px;padding:14px 20px;'
+            f'border:1.5px solid {dom_color}45;margin-top:12px;">'
+            f'<span style="font-size:12px;font-weight:800;color:{dom_color};'
+            f'font-family:Plus Jakarta Sans,sans-serif;text-transform:uppercase;letter-spacing:1px;">'
+            f'Primary focus area: {dom_label}</span><br>'
+            f'<span style="font-size:13px;font-weight:500;color:#3a2010;'
+            f'font-family:Plus Jakarta Sans,sans-serif;line-height:1.65;">{dom_tip}</span>'
+            f'</div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ══ 4. MOOD vs STRESS CORRELATION ═════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'Mood &amp; Stress Correlation</div>', unsafe_allow_html=True)
+
+    if not mood_logs:
+        st.info("No mood data yet. Log your daily mood on the **Mood** page to unlock "
+                "this insight — stress is one of the biggest drivers of stuttering severity.")
+    else:
+        mood_map_n = {"😊 Great":5,"🙂 Good":4,"😐 Okay":3,"😕 Low":2,"😢 Struggling":1}
+        stress_v = [l["stress"] for l in mood_logs]
+        mood_v   = [mood_map_n.get(l["mood"],3) for l in mood_logs]
+        avg_stress = sum(stress_v)/len(stress_v)
+        avg_mood   = sum(mood_v)/len(mood_v)
+
+        col_m1, col_m2 = st.columns([2,1])
+        with col_m1:
+            fig_m, ax_m = plt.subplots(figsize=(7,4), facecolor="none")
+            ax_m.set_facecolor((1,1,1,0)); fig_m.patch.set_alpha(0)
+            sc = ax_m.scatter(stress_v, mood_v, c=stress_v, cmap="RdYlGn_r",
+                               s=75, alpha=0.75, edgecolors="white", linewidths=0.8, zorder=3)
+            if len(stress_v) >= 3:
+                z = np.polyfit(stress_v,mood_v,1); xs = np.linspace(min(stress_v),max(stress_v),80)
+                ax_m.plot(xs,np.poly1d(z)(xs),color="#b094d4",linewidth=1.5,
+                           linestyle="--",alpha=0.75,zorder=4,label="Trend")
+            ax_m.set_xlabel("Stress Level  (1=calm · 10=very stressed)",fontsize=8,color="#7a5540")
+            ax_m.set_ylabel("Mood Score",fontsize=8,color="#7a5540")
+            ax_m.set_yticks([1,2,3,4,5])
+            ax_m.set_yticklabels(["Struggling","Low","Okay","Good","Great"],fontsize=8,color="#7a5540")
+            ax_m.set_xlim(0.5,10.5); ax_m.tick_params(axis="x",colors="#7a5540",labelsize=8)
+            for sp in ax_m.spines.values(): sp.set_visible(False)
+            ax_m.grid(linewidth=0.4,linestyle="--",color="#c4a0d8",alpha=0.25)
+            plt.colorbar(sc,ax=ax_m,label="Stress →",shrink=0.75).ax.tick_params(labelsize=7)
+            if len(stress_v)>=3: ax_m.legend(fontsize=8,facecolor="white",framealpha=0.6)
+            ax_m.set_title("Each dot = one mood log",color="#5a3520",fontsize=9,pad=8)
+            fig_m.tight_layout(pad=0.8)
+            st.pyplot(fig_m, use_container_width=True); plt.close(fig_m)
+
+        with col_m2:
+            mood_words = {5:"Great 😊",4:"Good 🙂",3:"Okay 😐",2:"Low 😕",1:"Struggling 😢"}
+            mood_label = mood_words.get(round(avg_mood),"Okay 😐")
+            if avg_stress<=3:
+                insight,ins_color = "✅ Low-stress environment — optimal for fluency practice.","#70c890"
+            elif avg_stress<=6:
+                insight,ins_color = "🟡 Moderate stress. Try box-breathing before each session.","#e8c060"
+            else:
+                insight,ins_color = "⚠️ High stress. Managing anxiety will directly improve fluency.","#d4849a"
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(14px);'
+                f'border-radius:18px;padding:20px;border:1.5px solid rgba(255,255,255,0.62);'
+                f'box-shadow:0 6px 20px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.75) inset;">'
+                f'<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+                f'color:#7a5540;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;">Summary</div>'
+                f'<div style="font-size:13px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;'
+                f'color:#5a3520;line-height:1.85;">'
+                f'<b>{len(mood_logs)}</b> entries logged<br>'
+                f'Avg stress: <b>{avg_stress:.1f} / 10</b><br>'
+                f'Avg mood: <b>{mood_label}</b></div>'
+                f'<div style="background:{ins_color}20;border-radius:10px;padding:10px 14px;'
+                f'border-left:3px solid {ins_color};margin-top:12px;">'
+                f'<span style="font-size:12px;font-weight:600;color:#3a2010;'
+                f'font-family:Plus Jakarta Sans,sans-serif;">{insight}</span>'
+                f'</div></div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ══ 5. THERAPY MILESTONES ═════════════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'Therapy Milestones</div>', unsafe_allow_html=True)
+
+    if not milestones:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(14px);'
+            'border-radius:18px;padding:28px;text-align:center;'
+            'border:1.5px solid rgba(255,255,255,0.58);">'
+            '<div style="font-size:32px;margin-bottom:10px;">🎯</div>'
+            '<div style="font-size:14px;font-weight:700;color:#2d1a0e;'
+            'font-family:Plus Jakarta Sans,sans-serif;">No milestones yet</div>'
+            '<div style="font-size:12px;font-weight:500;color:#7a5540;margin-top:6px;'
+            'font-family:Plus Jakarta Sans,sans-serif;">'
+            'Complete your first exercise to start earning milestones.</div>'
+            '</div>', unsafe_allow_html=True)
+    else:
+        rows_m = [milestones[i:i+2] for i in range(0, len(milestones), 2)]
+        for row_m in rows_m:
+            m_cols = st.columns(2)
+            for ci, m in enumerate(row_m):
+                date_html = (
+                    f'<div style="font-size:10px;color:#7a5540;margin-top:6px;">📅 {m["date"]}</div>'
+                    if m.get("date") and m["date"] != "—" else ""
+                )
+                with m_cols[ci]:
+                    st.markdown(
+                        '<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(14px);'
+                        'border-radius:18px;padding:18px 20px;margin-bottom:10px;'
+                        'border:1.5px solid rgba(255,255,255,0.62);border-left:4px solid '
+                        + m["color"] + ';'
+                        'box-shadow:0 4px 16px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.70) inset;">'
+                        '<div style="font-size:24px;margin-bottom:6px;">' + m["icon"] + '</div>'
+                        '<div style="font-size:13px;font-weight:800;color:#2d1a0e;margin-bottom:4px;">'
+                        + m["label"] + '</div>'
+                        '<div style="font-size:11px;font-weight:500;color:#5a3520;line-height:1.65;">'
+                        + m["detail"] + '</div>'
+                        + date_html +
+                        '</div>',
+                        unsafe_allow_html=True)
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ══ 6. CLINICAL SUMMARY ═══════════════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'Clinical Summary</div>', unsafe_allow_html=True)
+
+    rendered = []
+    for line in summary_text.split("\n"):
+        s = line.strip()
+        if not s:
+            rendered.append("<div style='height:6px'></div>")
+        elif s.startswith("━"):
+            rendered.append('<hr style="border:none;border-top:1px solid '
+                            'rgba(176,148,212,0.30);margin:10px 0;">')
+        elif s.startswith("Prepared:") or s.startswith("Patient:"):
+            rendered.append(f'<div style="font-size:12px;font-weight:600;color:#5a3520;'
+                            f'font-family:Plus Jakarta Sans,sans-serif;">{s}</div>')
+        elif s.isupper() and len(s) < 45:
+            rendered.append(f'<div style="font-size:11px;font-weight:800;letter-spacing:2px;'
+                            f'color:#7c5cbf;text-transform:uppercase;margin:14px 0 6px;'
+                            f'font-family:Plus Jakarta Sans,sans-serif;">{s}</div>')
+        elif s.startswith("RECOMMENDATION"):
+            body = s[len("RECOMMENDATION"):].lstrip(":").strip()
+            rendered.append(
+                '<div style="font-size:11px;font-weight:800;letter-spacing:2px;color:#7c5cbf;'
+                'text-transform:uppercase;margin:14px 0 6px;font-family:Plus Jakarta Sans,sans-serif;">'
+                'RECOMMENDATION</div>'
+                '<div style="background:rgba(124,92,191,0.12);border-radius:12px;'
+                'padding:14px 18px;border-left:3px solid #7c5cbf;">'
+                '<span style="font-size:13px;font-weight:500;color:#2d1a0e;line-height:1.75;'
+                'font-family:Plus Jakarta Sans,sans-serif;">' + body + '</span></div>')
+        else:
+            rendered.append(f'<div style="font-size:13px;font-weight:500;color:#3a2010;'
+                            f'line-height:1.80;font-family:Plus Jakarta Sans,sans-serif;">{s}</div>')
+
+    st.markdown(
+        '<div style="background:rgba(255,255,255,0.42);backdrop-filter:blur(20px);'
+        'border-radius:22px;padding:28px 32px;border:1.5px solid rgba(255,255,255,0.65);'
+        'box-shadow:0 8px 28px rgba(120,60,20,0.12),0 1px 0 rgba(255,255,255,0.78) inset;">'
+        + "".join(rendered) +
+        '</div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ══ 7. PDF DOWNLOAD ═══════════════════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:11px;font-weight:800;font-family:Plus Jakarta Sans,sans-serif;'
+        'letter-spacing:3px;color:#2d1a0e;text-transform:uppercase;margin-bottom:14px;">'
+        'Download Report</div>', unsafe_allow_html=True)
+
+    col_info, col_badge = st.columns([2,1])
+    with col_info:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(16px);'
+            'border-radius:18px;padding:20px 24px;border:1.5px solid rgba(255,255,255,0.62);'
+            'box-shadow:0 6px 20px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.75) inset;">'
+            '<div style="font-size:14px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;'
+            'color:#2d1a0e;margin-bottom:8px;">📄 3-Page A4 PDF Report</div>'
+            '<div style="font-size:12px;font-weight:500;font-family:Plus Jakarta Sans,sans-serif;'
+            'color:#5a3520;line-height:1.8;">'
+            'Key stats · Exercise score chart · Stutter profile · Weekly consistency · '
+            'Mood scatter · Milestone table · Exercise history · Written clinical summary'
+            '</div></div>', unsafe_allow_html=True)
+    with col_badge:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);'
+            'border-radius:16px;padding:16px;text-align:center;'
+            'border:1.5px solid rgba(255,255,255,0.58);">'
+            '<div style="font-size:28px;margin-bottom:8px;">📋</div>'
+            '<div style="font-size:11px;font-weight:700;font-family:Plus Jakarta Sans,sans-serif;'
+            'color:#7a5540;">A4 · 3 pages<br>Charts embedded<br>Print-ready</div>'
+            '</div>', unsafe_allow_html=True)
+
+    if st.button("⬇️  Generate & Download PDF", type="primary",
+                  use_container_width=True, key="pdf_btn"):
+        with st.spinner("Building your personalised PDF report…"):
+            try:
+                pdf_bytes = _build_pdf(
+                    uname, summary_text, baseline_clarity, best_score, avg_score,
+                    completed_count, total_attempts, pause_events, prolong_events,
+                    rep_events, mood_logs, milestones, ex_states, sessions)
+                fname = f"clarity_report_{uname}_{date.today().isoformat()}.pdf"
+                st.download_button(
+                    label="📥  Save PDF to your device",
+                    data=pdf_bytes, file_name=fname, mime="application/pdf",
+                    use_container_width=True)
+                st.success("PDF ready! Click the button above to save it.")
+            except Exception as e:
+                st.error(f"PDF generation failed: {e}")
+
+
+def _safe_date(date_str):
+    """Parse a date string safely, return date object or None."""
+    try:
+        from datetime import date as _d
+        return _d.fromisoformat(date_str)
+    except Exception:
+        return None
 
 
 def page_shadowing():
@@ -4989,13 +6276,24 @@ def main():
                 del st.session_state[k]
             st.rerun()
 
+    # ── Dr. Clara floating chat bubble ──
+    if "clara_open" not in st.session_state:
+        st.session_state.clara_open = False
+
+    if st.button("🤖 Dr. Clara", key="clara_toggle_btn"):
+        st.session_state.clara_open = not st.session_state.clara_open
+        st.rerun()
+
+    if st.session_state.clara_open:
+        with st.expander("💜 Dr. Clara", expanded=True):
+            page_coach()
+
     page = st.session_state.page
     if   page == "home":      page_home()
     elif page == "exercises": page_exercises()
     elif page == "progress":  page_progress()
     elif page == "mood":      page_mood()
     elif page == "report":    page_report()
-    elif page == "coach":     page_coach()
     elif page == "shadowing": page_shadowing()
     elif page == "challenge": page_challenge()
     elif page == "leaderboard": page_leaderboard()
