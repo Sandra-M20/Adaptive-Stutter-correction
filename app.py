@@ -448,7 +448,7 @@ def _clean_transcript(text: str) -> str:
 
 def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
     """
-    Transcribe with word-level timestamps using Whisper.
+    Transcribe with word-level timestamps using Whisper with enhanced accuracy.
     Returns (text: str, words: list[dict]) where each word has {word, start, end}.
     Returns ("", []) and shows an error if Whisper is unavailable or fails.
     """
@@ -460,8 +460,8 @@ def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
 
     try:
         if "whisper_model" not in st.session_state:
-            # Try small first, fall back to base if download/memory fails
-            for model_size in ("small", "base"):
+            # Try base.en first for better English accuracy, then small.en
+            for model_size in ("base.en", "small.en", "base", "small"):
                 try:
                     with st.spinner(
                         f"Loading transcription model '{model_size}' "
@@ -479,26 +479,47 @@ def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
 
         model = st.session_state.whisper_model
 
+        # Preprocess audio for better transcription
+        # Normalize audio to optimal level for Whisper
+        audio_signal = signal.copy()
+        if np.max(np.abs(audio_signal)) > 1e-6:
+            audio_signal = audio_signal / np.max(np.abs(audio_signal)) * 0.95
+
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp = f.name
-        sf.write(tmp, signal, sr)
+        sf.write(tmp, audio_signal, sr)
 
+        # Enhanced transcription settings for better accuracy
         res = model.transcribe(
             tmp,
             language="en",
             fp16=False,
             word_timestamps=True,
-            initial_prompt="The following is stuttered speech with repetitions and prolonged sounds.",
+            initial_prompt="This is clear speech about everyday topics. The speaker may stutter or repeat words occasionally.",
             condition_on_previous_text=False,
+            temperature=0.0,  # Lower temperature for more consistent results
+            beam_size=5,     # Use beam search for better accuracy
+            best_of=5,        # Try multiple decodings
+            patience=1.0,     # Allow more time for better decoding
         )
         os.unlink(tmp)
 
+        # Post-process words for better accuracy
         words = []
         for seg in res.get("segments", []):
             for w in seg.get("words", []):
-                words.append({"word": w["word"], "start": w["start"], "end": w["end"]})
+                # Filter out very short or unreliable timestamps
+                if w["end"] - w["start"] > 0.01:  # At least 10ms duration
+                    words.append({"word": w["word"], "start": w["start"], "end": w["end"]})
 
-        return res.get("text", "").strip(), words
+        # Clean up the transcription text
+        text = res.get("text", "").strip()
+        
+        # Remove excessive spaces and clean up punctuation
+        text = ' '.join(text.split())  # Normalize spaces
+        text = text.replace(' ,', ',').replace(' .', '.').replace(' ?', '?').replace(' !', '!')
+
+        return text, words
 
     except Exception as e:
         st.error(f"Transcription failed: {e}")
@@ -668,47 +689,22 @@ def _audio_comparison(signal: np.ndarray, sr: int,
     """
     st.divider()
     st.markdown(
-        "<h3 style='color:#5a4878;margin-bottom:4px;'>Audio Comparison</h3>",
+        "<h3 style='color:#5a4878;margin-bottom:4px;'>Your Recording</h3>",
         unsafe_allow_html=True,
     )
 
-    # Resolve corrected signal
-    if words:
-        corrected_voice = _correct_with_timestamps(signal, sr, words)
-        clean_text      = _clean_transcript(text)
-        corr_label      = "Corrected — your own voice"
-    else:
-        corrected_voice = result.get("corrected_signal")
-        clean_text      = ""
-        corr_label      = "Corrected — DSP pipeline"
-
-    col_orig, col_corr = st.columns(2)
-
-    with col_orig:
-        st.markdown(
-            "<div style='background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.45);"
-            "border-radius:14px;padding:14px 16px 10px;'>"
-            "<span style='color:#90bcd4;font-weight:700;font-size:14px;'>Original</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        st.audio(_audio_bytes(signal, sr), format="audio/wav")
-        if text:
-            st.caption(f"*\"{text}\"*")
-
-    with col_corr:
-        use_corrected = corrected_voice is not None and len(corrected_voice) > 0
-        if use_corrected and np.max(np.abs(corrected_voice)) > 1e-6:
-            st.markdown(
-                "<div style='background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.45);"
-                "border-radius:14px;padding:14px 16px 10px;'>"
-                f"<span style='color:#b094d4;font-weight:700;font-size:14px;'>{corr_label}</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            st.audio(_audio_bytes(corrected_voice, sr), format="audio/wav")
-            if clean_text:
-                st.caption(f"*\"{clean_text}\"*")
+    # Focus on original audio and accurate transcription
+    st.markdown(
+        "<div style='background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.45);"
+        "border-radius:14px;padding:14px 16px 10px;'>"
+        "<span style='color:#90bcd4;font-weight:700;font-size:14px;'>Original Recording</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.audio(_audio_bytes(signal, sr), format="audio/wav")
+    if text:
+        st.caption(f"*\"{text}\"*")
+    
     _fluency_report_card(result, clarity, baseline_clarity)
 
 
@@ -745,23 +741,6 @@ def _analyze(signal: np.ndarray, sr: int) -> tuple:
     result = run_pipeline(signal, sr)
     clarity = _compute_clarity(result)
     return result, clarity
-
-
-def _smooth_corrected_audio(signal: np.ndarray, sr: int) -> np.ndarray:
-    """
-    Apply a gentle low-pass filter to corrected audio to reduce
-    high-frequency splice artifacts before playback.
-    Cutoff: 7500 Hz (preserves all speech, removes only artifact hiss).
-    """
-    try:
-        from scipy.signal import butter, filtfilt
-        nyq = sr / 2.0
-        cutoff = min(7500.0, nyq * 0.95)
-        b, a = butter(2, cutoff / nyq, btype="low")
-        smoothed = filtfilt(b, a, signal.astype(np.float64))
-        return smoothed.astype(np.float32)
-    except Exception:
-        return signal   # fallback: return as-is
 
 
 # === CLARITY SCORE IMPLEMENTATION: START ===
@@ -3060,10 +3039,6 @@ def page_home():
         if st.button("Analyze My Speech", type="primary", use_container_width=True):
             with st.spinner("Analyzing your speech…"):
                 result, clarity = _analyze(signal, sr)
-                # Smooth corrected audio for playback
-                result["corrected_signal"] = _smooth_corrected_audio(
-                    result["corrected_signal"], result["sr"]
-                )
 
             # Transcription first so it gets stored alongside results
             with st.spinner("Analyzing & transcribing…"):
@@ -3310,10 +3285,6 @@ def page_exercise_detail(ex_id: int):
         ):
             with st.spinner("Analyzing your speech…"):
                 result, clarity = _analyze(signal, sr)
-                # Smooth corrected audio for playback
-                result["corrected_signal"] = _smooth_corrected_audio(
-                    result["corrected_signal"], result["sr"]
-                )
 
             # Persist updated state
             state["attempts"] += 1
@@ -4708,11 +4679,6 @@ def page_challenge():
             ):
                 with st.spinner("Analysing your challenge attempt..."):
                     result, clarity = _analyze(signal, sr)
-                    result["corrected_signal"] = \
-                        _smooth_corrected_audio(
-                            result["corrected_signal"],
-                            result["sr"]
-                        )
 
                 _score_card(clarity, "Challenge Score")
                 _event_metrics(result)
@@ -6418,11 +6384,6 @@ def page_shadowing():
             ):
                 with st.spinner("Analyzing your shadowing..."):
                     result, clarity = _analyze(signal, sr)
-                    result["corrected_signal"] = \
-                        _smooth_corrected_audio(
-                            result["corrected_signal"],
-                            result["sr"]
-                        )
                 
                 _score_card(clarity, "Shadowing Score")
                 _event_metrics(result)
