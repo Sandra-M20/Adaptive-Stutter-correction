@@ -189,23 +189,49 @@ class RepetitionCorrector:
         detection_events = []
         
         i = 0
-        while i < len(chunks) - 1:
-            # Compare current chunk with the next one
-            f1, f2 = chunk_feats[i], chunk_feats[i+1]
-            norm1, norm2 = np.linalg.norm(f1), np.linalg.norm(f2)
-            sim = np.dot(f1, f2) / (norm1 * norm2) if norm1 > 1e-9 and norm2 > 1e-9 else 0
-            
-            if sim > self.sim_threshold: 
-                if removed < max_remove_chunks:
-                    keep[i] = False
-                    removed += 1
-                    # Record event for evaluation
-                    detection_events.append({
-                        "start_sample": starts[i],
-                        "end_sample": starts[i] + self.chunk_size,
-                        "duration_s": self.chunk_size / self.sr
-                    })
-            i += 1
+        rep_count = 0
+        while i < len(chunks) - 2:
+            # Compare chunk i with chunk i+2 (skip one)
+            # True repetitions sound like chunk N then chunk N+2
+            # while chunk N+1 is a very short transition
+            f1 = chunk_feats[i]
+            f2 = chunk_feats[i + 1]
+            f3 = chunk_feats[i + 2] if i + 2 < len(chunks) else None
+
+            norm1 = np.linalg.norm(f1)
+            norm2 = np.linalg.norm(f2)
+
+            if norm1 < 1e-9 or norm2 < 1e-9:
+                i += 1
+                continue
+
+            sim_adjacent = np.dot(f1, f2) / (norm1 * norm2)
+
+            # Only flag as repetition if:
+            # 1. Current and next chunk are very similar (sim > threshold)
+            # 2. Energy of current chunk is non-trivial (not silence)
+            energy1 = float(np.mean(chunks[i] ** 2))
+            energy2 = float(np.mean(chunks[i+1] ** 2))
+
+            is_repetition = (
+                sim_adjacent > self.sim_threshold and
+                energy1 > 1e-5 and
+                energy2 > 1e-5 and
+                removed < max_remove_chunks
+            )
+
+            if is_repetition:
+                keep[i] = False
+                removed += 1
+                rep_count += 1
+                detection_events.append({
+                    "start_sample": starts[i],
+                    "end_sample":   starts[i] + self.chunk_size,
+                    "duration_s":   self.chunk_size / self.sr
+                })
+                i += 2  # skip both to avoid chain removal
+            else:
+                i += 1
 
         # Reconstruct with CROSSFADING (Optimized)
         fade_len = int(self.sr * 0.05) # 50ms fade

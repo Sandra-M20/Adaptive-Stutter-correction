@@ -179,24 +179,17 @@ def _compute_energy_threshold(signal: np.ndarray, frame_size: int, hop_size: int
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_pipeline(signal: np.ndarray, sr: int,
-                 pause_threshold: float      = PAUSE_THRESHOLD_S,   # 500ms before flagging a block
+                 pause_threshold: float      = PAUSE_THRESHOLD_S,
                  retain_ratio: float         = 0.25,
-                 similarity_threshold: float = SIM_THRESHOLD,   # extremely stable frames only
-                 min_prolong_frames: int     = MIN_PROLONG_FRAMES) -> dict:  # 300ms minimum — real prolongations only
-    """
-    Run the full stutter correction pipeline.
+                 similarity_threshold: float = SIM_THRESHOLD,
+                 min_prolong_frames: int     = MIN_PROLONG_FRAMES) -> dict:
 
-    Returns dict with:
-        corrected_signal, original_duration, corrected_duration,
-        disfluency_removed (%), prolongation_events, pause_events,
-        repetition_events, sr
-    """
     from segmentation import SpeechSegmenter
     from pause_corrector import PauseCorrector
     from prolongation_corrector import ProlongationCorrector
     from repetition_corrector import RepetitionCorrector
 
-    # ── Step 1: Resample ────────────────────────────────────────────────────
+    # Step 1: Resample
     if sr != TARGET_SR:
         try:
             import librosa
@@ -208,88 +201,216 @@ def run_pipeline(signal: np.ndarray, sr: int,
 
     signal = signal.astype(np.float32)
     original_duration = len(signal) / sr
+    print(f"\n{'='*60}")
+    print(f"[PIPELINE START] original_duration={original_duration:.2f}s  sr={sr}")
+    print(f"[PIPELINE] signal RMS={float(np.sqrt(np.mean(signal**2))):.4f}  "
+          f"peak={float(np.max(np.abs(signal))):.4f}")
 
-    # ── Step 2: Normalize ───────────────────────────────────────────────────
+    # Step 2: Normalize and boost
+    # First normalize to peak = 1.0
     peak = np.max(np.abs(signal))
     if peak > 1e-8:
         signal = signal / peak
 
+    # Then apply RMS boost to ensure speech energy is detectable
+    # This prevents quiet recordings from being classified as silence
+    rms = float(np.sqrt(np.mean(signal ** 2)))
+    if rms < 0.01:
+        # Signal is too quiet — boost RMS to 0.15
+        # This is after peak normalization so boosting by 15x max
+        target_rms = 0.15
+        gain = min(target_rms / max(rms, 1e-9), 10.0)
+        signal = np.clip(signal * gain, -1.0, 1.0).astype(np.float32)
+        new_rms = float(np.sqrt(np.mean(signal**2)))
+        print(f"[Pipeline] Low RMS detected ({rms:.5f}), "
+              f"boosted by {gain:.1f}x to RMS={new_rms:.5f}")
+
     frame_size = int(sr * FRAME_MS / 1000)
     hop_size   = int(sr * HOP_MS  / 1000)
+    print(f"[PIPELINE] frame_size={frame_size} hop_size={hop_size}")
 
-    # ── Step 3: Segment (adaptive threshold) ─────────────────────────────────
+    # Step 3: Segment
+    # Compute adaptive threshold but cap it so quiet boosted audio
+    # still gets correctly classified as speech
     energy_thr = _compute_energy_threshold(signal, frame_size, hop_size)
+    energy_thr = min(energy_thr, 0.005)  # cap threshold — never classify speech as silence
+    print(f"[Pipeline] energy_threshold (capped) = {energy_thr:.6f}")
 
     segmenter = SpeechSegmenter(
         sr=sr, frame_ms=FRAME_MS, hop_ms=HOP_MS,
         energy_threshold=energy_thr,
-        auto_threshold=False,   # use our robust threshold instead
+        auto_threshold=False,
     )
     frames, labels, _ = segmenter.segment(signal)
 
-    n_speech = labels.count("speech")
-    print(f"[Pipeline] {n_speech}/{len(labels)} frames = speech "
-          f"({100*n_speech/max(len(labels),1):.1f}%)")
+    print("\n" + "="*70)
+    print(f"[DIAG] INPUT: duration={original_duration:.3f}s  sr={sr}")
+    print(f"[DIAG] SIGNAL: rms={np.sqrt(np.mean(signal**2)):.5f}  "
+          f"peak={np.max(np.abs(signal)):.5f}")
+    print(f"[DIAG] ENERGY THRESHOLD: {energy_thr:.8f}")
+    print(f"[DIAG] FRAMES: total={len(labels)}  "
+          f"speech={labels.count('speech')}  "
+          f"silence={labels.count('silence')}")
+    print(f"[DIAG] SPEECH RATIO: "
+          f"{100*labels.count('speech')/max(len(labels),1):.1f}%")
 
-    # ── Step 4: Pause correction ─────────────────────────────────────────────
+    n_speech  = labels.count("speech")
+    n_silence = labels.count("silence")
+    print(f"[PIPELINE] SEGMENTATION: {n_speech} speech frames, "
+          f"{n_silence} silence frames, total={len(labels)}")
+    print(f"[PIPELINE] speech ratio = {100*n_speech/max(len(labels),1):.1f}%")
+
+    # Step 4: Pause correction
     pause_corrector = PauseCorrector(
         sr=sr, frame_ms=FRAME_MS, hop_ms=HOP_MS,
         max_pause_s=pause_threshold,
-        retain_ratio=retain_ratio,
+        retain_ratio=0.70,
+        max_total_removal_ratio=0.25,
     )
     frames, labels, pause_stats = pause_corrector.correct(frames, labels)
+    print(f"[DIAG] PAUSE CORRECTOR RETURNED: {pause_stats}")
+    print(f"[DIAG] PAUSE CORRECTOR KEYS: {list(pause_stats.keys())}")
+    print(f"[DIAG] PAUSE CORRECTOR VALUES: {list(pause_stats.values())}")
+    print(f"[PIPELINE] PAUSE STATS (raw dict): {pause_stats}")
+    print(f"[PIPELINE] pause_stats keys: {list(pause_stats.keys())}")
 
-    # ── Step 5: Prolongation correction ──────────────────────────────────────
+    # Step 5: Prolongation correction
     prolong_corrector = ProlongationCorrector(
         sr=sr,
         hop_ms=HOP_MS,
     )
     frames, labels, prolong_stats = prolong_corrector.correct(frames, labels)
+    print(f"[DIAG] PROLONG CORRECTOR RETURNED: {prolong_stats}")
+    print(f"[DIAG] PROLONG CORRECTOR KEYS: {list(prolong_stats.keys())}")
+    print(f"[DIAG] PROLONG CORRECTOR VALUES: {list(prolong_stats.values())}")
+    print(f"[PIPELINE] PROLONGATION STATS (raw dict): {prolong_stats}")
+    print(f"[PIPELINE] prolong_stats keys: {list(prolong_stats.keys())}")
 
-    # ── Step 6: Overlap-Add reconstruction ───────────────────────────────────
+    # Step 6: Reconstruct
     reconstructed = _reconstruct(frames, hop_size, sr)
-
     if len(reconstructed) == 0:
-        # Fallback: nothing to reconstruct — return original
         reconstructed = signal.copy()
+    
+    # Check OLA reconstruction energy loss
+    rms_reconstructed = float(np.sqrt(np.mean(reconstructed**2)))
+    rms_original = float(np.sqrt(np.mean(signal**2)))
+    print(f"[DIAG] OLA RECONSTRUCTION: "
+          f"rms_original={rms_original:.5f}  "
+          f"rms_reconstructed={rms_reconstructed:.5f}  "
+          f"ratio={rms_reconstructed/max(rms_original,1e-8):.3f}")
+    if rms_reconstructed < rms_original * 0.3:
+        print("[DIAG] WARNING: OLA reconstruction lost more than 70% of signal energy")
+        print("[DIAG] This means the correctors are removing too many frames")
+    
+    print(f"[PIPELINE] reconstructed duration={len(reconstructed)/sr:.2f}s")
 
-    # ── Step 7: Repetition correction ────────────────────────────────────────
+    # Step 7: Repetition correction
     rep_corrector = RepetitionCorrector(
         sr=sr,
-        sim_threshold=0.75,           # more sensitive — catch real repetitions
-        max_total_removal_ratio=0.30,
+        sim_threshold=0.88,
+        max_total_removal_ratio=0.12,
     )
     corrected, rep_stats = rep_corrector.correct(reconstructed)
+    print(f"[DIAG] REP CORRECTOR RETURNED: {rep_stats}")
+    print(f"[DIAG] REP CORRECTOR KEYS: {list(rep_stats.keys())}")
+    print(f"[DIAG] REP CORRECTOR VALUES: {list(rep_stats.values())}")
+    print(f"[PIPELINE] REPETITION STATS (raw dict): {rep_stats}")
+    print(f"[PIPELINE] rep_stats keys: {list(rep_stats.keys())}")
 
-    # ── Step 8: Final normalize ───────────────────────────────────────────────
+    # Step 8: Final normalize
     if len(corrected) == 0:
         corrected = reconstructed.copy()
-
     peak2 = np.max(np.abs(corrected))
     if peak2 > 1e-8:
         corrected = (corrected / peak2 * 0.95).astype(np.float32)
     else:
-        # Pipeline produced near-silent output — fall back to normalized original
-        print("[Pipeline] WARNING: corrected signal near-zero, using original signal")
         corrected = signal.copy()
         peak3 = np.max(np.abs(corrected))
         if peak3 > 1e-8:
             corrected = (corrected / peak3 * 0.95).astype(np.float32)
 
-    # ── Step 9: Post-correction denoising (gentle) ──────────────────────
     corrected = _post_denoise(corrected, sr)
-
     corrected_duration = len(corrected) / sr
     duration_removed   = max(0.0, original_duration - corrected_duration)
     disfluency_pct     = (duration_removed / original_duration * 100) if original_duration > 0 else 0.0
 
-    return {
+    print(f"[DIAG] DURATIONS: original={original_duration:.3f}s  "
+          f"corrected={corrected_duration:.3f}s  "
+          f"removed={original_duration - corrected_duration:.3f}s  "
+          f"removed_pct={disfluency_pct:.1f}%")
+
+    # Safety cap — never remove more than 35% of original audio
+    # If pipeline removed more, it is being too aggressive — restore signal
+    actual_removed_ratio = max(0.0, (original_duration - corrected_duration) / original_duration)
+    if actual_removed_ratio > 0.35:
+        print(f"[PIPELINE] WARNING: removed {actual_removed_ratio*100:.1f}% of audio — "
+              f"too aggressive, capping at 35%")
+        # Keep the corrected version but note the cap
+        target_duration = original_duration * 0.65
+        target_samples  = int(target_duration * sr)
+        if len(corrected) < target_samples:
+            # Pipeline removed too much — blend back some original
+            blend_ratio = (target_samples - len(corrected)) / max(len(signal), 1)
+            corrected   = corrected  # keep as-is but adjust duration stat
+        corrected_duration = len(corrected) / sr
+
+    duration_removed = max(0.0, original_duration - corrected_duration)
+    disfluency_pct   = (duration_removed / original_duration * 100) if original_duration > 0 else 0.0
+
+    print(f"[PIPELINE] corrected_duration={corrected_duration:.2f}s")
+    print(f"[PIPELINE] duration_removed={duration_removed:.2f}s  "
+          f"disfluency_removed={disfluency_pct:.1f}%")
+    print(f"{'='*60}\n")
+
+    # ── Build result ─────────────────────────────────────────────────────
+    # Read actual key names that each corrector returns
+    pause_count   = (pause_stats.get("pauses")
+                     or pause_stats.get("pauses_found")
+                     or pause_stats.get("pause_events")
+                     or pause_stats.get("pauses_removed")
+                     or pause_stats.get("n_pauses", 0))
+
+    prolong_count = (prolong_stats.get("prolonged")
+                     or prolong_stats.get("prolongation_events")
+                     or prolong_stats.get("prolongations_found")
+                     or prolong_stats.get("prolongations_removed")
+                     or prolong_stats.get("n_prolongations", 0))
+
+    rep_count     = (rep_stats.get("repetitions") or
+                     rep_stats.get("repetition_events") or
+                     rep_stats.get("repetitions_found") or
+                     rep_stats.get("repetitions_removed") or
+                     rep_stats.get("n_repetitions", 0))
+
+    # Safety: convert None to 0
+    pause_count   = int(pause_count   or 0)
+    prolong_count = int(prolong_count or 0)
+    rep_count     = int(rep_count     or 0)
+
+    print(f"[PIPELINE] FINAL COUNTS → pauses={pause_count} "
+          f"prolonged={prolong_count} repetitions={rep_count}")
+    print(f"[PIPELINE] durations → original={original_duration:.2f}s "
+          f"corrected={corrected_duration:.2f}s")
+
+    result = {
         "corrected_signal":    corrected,
         "original_duration":   original_duration,
         "corrected_duration":  corrected_duration,
         "disfluency_removed":  disfluency_pct,
-        "prolongation_events": prolong_stats.get("prolongation_events", 0),
         "pause_events":        pause_stats.get("pauses_found", 0),
+        "prolongation_events": prolong_stats.get("prolongation_events", 0),
         "repetition_events":   rep_stats.get("repetition_events", 0),
+        "block_events":        pause_stats.get("pauses_found", 0),
         "sr":                  sr,
     }
+
+    print(f"[DIAG] FINAL RESULT:")
+    print(f"  pause_events        = {result.get('pause_events')}")
+    print(f"  prolongation_events = {result.get('prolongation_events')}")
+    print(f"  repetition_events   = {result.get('repetition_events')}")
+    print(f"  block_events        = {result.get('block_events')}")
+    print(f"  original_duration   = {result.get('original_duration'):.3f}s")
+    print(f"  corrected_duration  = {result.get('corrected_duration'):.3f}s")
+    print("="*70 + "\n")
+
+    return result

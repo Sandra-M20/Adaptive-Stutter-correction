@@ -557,9 +557,55 @@ def _load_audio(audio_file) -> tuple:
     return signal.astype(np.float32), int(sr)
 
 
+def _boost_audio(signal: np.ndarray, sr: int,
+                 target_db: float = -12.0) -> np.ndarray:
+    """
+    Boost recorded audio to a consistent loudness level before analysis.
+    
+    Uses RMS-based normalization to bring quiet recordings up to
+    target_db without clipping loud recordings.
+    
+    target_db = -12.0 means RMS level will be set to -12 dBFS
+    which is loud enough for pipeline to detect speech correctly
+    without distorting signal.
+    """
+    signal = signal.astype(np.float32)
+    
+    # Calculate current RMS level
+    rms = float(np.sqrt(np.mean(signal ** 2)))
+    
+    if rms < 1e-9:
+        # Near-silent signal — return as-is
+        return signal
+    
+    # Target RMS from dB value
+    target_rms = 10.0 ** (target_db / 20.0)
+    
+    # Calculate required gain
+    gain = target_rms / rms
+    
+    # Cap gain to prevent over-amplifying already loud signals
+    # Maximum gain of 8x (18dB boost) to avoid distortion
+    gain = min(gain, 8.0)
+    
+    # Apply gain
+    boosted = signal * gain
+    
+    # Hard limiter — never exceed -1.0 to +1.0
+    boosted = np.clip(boosted, -1.0, 1.0)
+    
+    print(f"[AudioBoost] rms={rms:.5f} → target={target_rms:.5f} "
+          f"gain={gain:.2f}x ({20*np.log10(gain):.1f}dB boost)")
+    
+    return boosted
+
+
 def _analyze(signal: np.ndarray, sr: int) -> tuple:
     """Run the stutter-correction pipeline → (result_dict, clarity_pct)."""
     from working_pipeline import run_pipeline
+    # Boost audio to consistent level before pipeline analysis
+    # This fixes low-volume recordings being misclassified as silence
+    signal = _boost_audio(signal, sr, target_db=-12.0)
     result = run_pipeline(signal, sr)
     clarity = _compute_clarity(result)
     return result, clarity
@@ -568,30 +614,34 @@ def _analyze(signal: np.ndarray, sr: int) -> tuple:
 # === CLARITY SCORE IMPLEMENTATION: START ===
 def _compute_clarity(result: dict) -> float:
     """
-    Improved clarity score that's more realistic for natural speech patterns.
-    - Pauses (-1): Normal pauses are natural, only very long ones penalized
-    - Prolongations (-2): Mild stretching is common in natural speech
-    - Repetitions (-3): Some repetition is normal, excessive is penalized
-    - Base score starts at 85% (most natural speech is quite clear)
-    Capped to [0, 100].
+    Clarity score 0-100%. Higher = more fluent.
+
+    Calibrated expected ranges:
+      Fluent (0 events, <8% removed)     → 88-100%
+      Mild   (1-3 events, 8-18% removed) → 68-87%
+      Moderate     (4-7, 18-32% removed)     → 44-67%
+      Severe       (8+, 32%+ removed)          → below 44%
     """
-    pauses  = result.get("pause_events", 0)
-    prolong = result.get("prolongation_events", 0)
-    rep     = result.get("repetition_events", 0)
-    
-    # Start with a base score of 85% (natural speech baseline)
-    base_score = 85.0
-    
-    # More lenient penalties for natural speech patterns
-    penalty = pauses * 1 + prolong * 2 + rep * 3
-    
-    # Apply penalty but don't go below 0
-    clarity = max(0.0, base_score - penalty)
-    
-    # Cap at 100%
-    clarity = min(100.0, clarity)
-    
-    return round(clarity, 1)
+    pauses   = result.get("pause_events", 0)
+    prolong  = result.get("prolongation_events", 0)
+    rep      = result.get("repetition_events", 0)
+    original  = max(result.get("original_duration", 1.0), 0.1)
+    corrected = result.get("corrected_duration", original)
+
+    # Removal ratio capped at 50%
+    removed_ratio = min(0.50, max(0.0, (original - corrected) / original))
+
+    # Duration score — 0% removed = 100, 50% removed = 20
+    duration_score = max(0.0, 100.0 - (removed_ratio * 160.0))
+
+    # Event score — normalised by recording length
+    ref = max(original / 10.0, 0.8)
+    event_penalty = (pauses * 3 + prolong * 5 + rep * 4) / ref
+    event_score = max(0.0, 100.0 - min(event_penalty, 100.0))
+
+    # 50/50 blend
+    score = (duration_score * 0.50) + (event_score * 0.50)
+    return round(max(0.0, min(100.0, score)), 1)
 # === CLARITY SCORE IMPLEMENTATION: END ===
 
 
@@ -2722,6 +2772,8 @@ def _recording_section(widget_key: str) -> tuple:
             f"Please speak for at least {MIN_DURATION:.0f} seconds."
         )
         return None, None
+    # Boost audio level for better pipeline detection
+    signal = _boost_audio(signal, sr, target_db=-12.0)
     st.caption(f"Recorded {dur:.1f}s — ready to analyze.")
     return signal, sr
 

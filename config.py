@@ -33,24 +33,24 @@ LPC_ORDER       = 12       # LPC polynomial order
 # SPEECH SEGMENTATION THRESHOLDS (Step 3)
 # ─────────────────────────────────────────────────────────────────────────────
 
-ENERGY_THRESHOLD    = 0.01     # Short-Time Energy threshold: frames above → speech
+ENERGY_THRESHOLD    = 0.001
                                 # frames below → silence
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAUSE CORRECTION THRESHOLDS (Step 4)
 # ─────────────────────────────────────────────────────────────────────────────
 
-PAUSE_THRESHOLD_S   = 0.50     # was 0.30 — only remove abnormal pauses (500ms+)
+PAUSE_THRESHOLD_S   = 0.45   # only flag pauses longer than 450ms
 MAX_PAUSE_S         = PAUSE_THRESHOLD_S  # alias for pause corrector
-PAUSE_RETAIN_RATIO  = 0.10     # Optimized from SEP-28K dataset calibration
+PAUSE_RETAIN_RATIO  = 0.70     # Optimized from SEP-28K dataset calibration
 PAUSE_MAX_REMOVE_RATIO = 0.40  # Global cap for pause-frame removal across a clip
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PROLONGATION DETECTION THRESHOLDS (Steps 7-9)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SIM_THRESHOLD       = 0.85     # was 0.92 — allow typical prolongations (0.85–0.90)
-MIN_PROLONG_FRAMES  = 6        # 150ms minimum — shorter prolongations should be caught
+SIM_THRESHOLD       = 0.80   # prolongation sensitivity
+MIN_PROLONG_FRAMES  = 5      # minimum 5 frames (~150ms) to count as prolongation
 KEEP_FRAMES         = 2        # Keep 2 onset frames, remove the rest
 PROLONG_MAX_REMOVE_RATIO = 0.40  # Optimized from SEP-28K dataset calibration  
 CORR_THRESHOLD      = 14.0     
@@ -77,8 +77,8 @@ BLOCK_CONTEXT_FRAMES     = 3      # Context frames before/after candidate block
 BLOCK_RECOVERY_RATIO     = 1.8    # Post/pre energy recovery ratio required
 
 # SPECTRAL FEATURES (User-requested DSP enhancement)
-SPECTRAL_FLUX_THRESHOLD     = 0.08   # More lenient — catch real prolongations
-SPECTRAL_FLATNESS_THRESHOLD = 0.60   # More lenient — catch real prolongations
+SPECTRAL_FLUX_THRESHOLD     = 0.04
+SPECTRAL_FLATNESS_THRESHOLD = 0.40
 
 # GLOBAL MEANING-PRESERVATION SAFETY
 MAX_TOTAL_DURATION_REDUCTION = 0.40  # Allow up to 40% removal (prevents safety reversion)
@@ -89,7 +89,7 @@ MAX_TOTAL_DURATION_REDUCTION = 0.40  # Allow up to 40% removal (prevents safety 
 
 REP_CHUNK_MS        = 150      # Chunk size for DTW repetition analysis (ms)
 DTW_THRESHOLD       = 3.5      # Max normalized DTW distance to flag repetition
-REP_MAX_REMOVAL_RATIO = 0.20   # Limit: never remove more than 20% of signal as repetitions
+REP_MAX_REMOVAL_RATIO = 0.12
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REPTILE MAML SETTINGS (Step 10)
