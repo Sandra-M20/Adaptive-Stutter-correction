@@ -1638,6 +1638,8 @@ textarea::placeholder {
         letter-spacing:-1px;line-height:1.1;}
     .login-sub{color:#6a5a9a!important;font-size:15px;
         max-width:420px;margin:auto;line-height:1.7;font-weight:400;}
+    .login-sub2{color:#7a5540!important;font-size:14px;
+        max-width:380px;margin:8px auto 0;line-height:1.6;font-weight:500;}
 
     /* WAVE BARS */
     .wave-bars{display:flex;gap:6px;height:40px;align-items:center;
@@ -4010,7 +4012,7 @@ def _render_sidebar():
 def page_login():
     # All complex styles live in CSS classes — single-line tags avoid Streamlit's HTML parser breaking
     st.markdown(
-        f'<div class="login-hero"><div class="login-glow"></div>{_WAVE_BARS_HTML}<div class="login-title">Stutter Clarity Coach</div><div class="login-sub">Your personal speech fluency companion — record, analyse, and improve.</div></div>',
+        f'<div class="login-hero"><div class="login-glow"></div>{_WAVE_BARS_HTML}<div class="login-title">StutterAssist</div><div class="login-sub">Adaptive speech correction and fluency practice system.</div><div class="login-sub2">Your personal speech fluency companion — record, analyse, and improve.</div></div>',
         unsafe_allow_html=True,
     )
 
