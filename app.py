@@ -526,186 +526,8 @@ def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
         return "", []
 
 
-def _correct_with_timestamps(signal: np.ndarray, sr: int, words: list) -> np.ndarray:
-    """
-    Remove stutters using word-level timestamps — stays in the user's own voice.
-
-    Steps:
-      1. Drop single-consonant fragment words (b, g, s…) before the real word.
-      2. Collapse consecutive repeated / prefix-matched words (word-level + sound-level stutters).
-      3. Trim abnormally long short words (prolongations).
-      4. Cap long pauses between words to 200 ms.
-      5. Concatenate kept segments with 25 ms crossfades to avoid clicks.
-    """
-    if not words:
-        return signal
-
-    def _norm(w):
-        return re.sub(r"[^a-z']", "", w["word"].lower())
-
-    # ── Step 1: Drop stutter fragments ────────────────────────────────────
-    # A single consonant like "b" or "g" is a fragment ONLY if:
-    #   • the very next real word starts with the same consonant, AND
-    #   • that next word begins within 0.6 s of this fragment ending
-    # (Guards against removing real standalone words that just happen to
-    #  share a first letter with something later in the sentence.)
-    clean = []
-    # Build a list of "next real word" for each position
-    real_next = {}   # idx → next idx that has non-empty norm
-    last_real = None
-    for idx in range(len(words) - 1, -1, -1):
-        if _norm(words[idx]):
-            real_next[idx] = last_real
-            last_real = idx
-        else:
-            real_next[idx] = last_real
-
-    for idx, w in enumerate(words):
-        n = _norm(w)
-        if not n:
-            continue
-        if len(n) == 1 and n not in "aeiou":
-            nxt_idx = real_next.get(idx)
-            if nxt_idx is not None:
-                nn = _norm(words[nxt_idx])
-                gap = words[nxt_idx]["start"] - w["end"]
-                if nn and nn[0] == n[0] and gap < 0.60:
-                    continue   # it's a fragment — drop it
-        clean.append(w)
-
-    words = clean
-
-    # ── Step 2: Collapse repeated / prefix-matched consecutive words ───────
-    # Only collapses runs where consecutive words are temporally close (< 0.6 s gap).
-    # Prefix matching only applies when the shorter word has ≤ 4 characters,
-    # preventing over-eager collapsing of unrelated adjacent words.
-    FILLERS = {"um", "uh", "er", "ah", "hmm", "mhm", "erm"}
-    MAX_STUTTER_GAP = 0.60   # runs separated by more than this are NOT repetitions
-
-    keep = []
-    i = 0
-    while i < len(words):
-        n = _norm(words[i])
-        if not n or n in FILLERS:
-            i += 1
-            continue
-        j = i + 1
-        cur_word = words[i]
-        cur_n = n
-        while j < len(words):
-            nj = _norm(words[j])
-            if not nj or nj in FILLERS:
-                j += 1
-                continue
-            gap = words[j]["start"] - words[j - 1]["end"]
-            if gap > MAX_STUTTER_GAP:
-                break   # too far apart — not a stutter run
-            # Exact match
-            if nj == cur_n:
-                cur_word = words[j]
-                cur_n = nj
-                j += 1
-                continue
-            # Prefix match — only when the repeated fragment is very short (≤ 4 chars)
-            shorter = min(cur_n, nj, key=len)
-            longer  = cur_n if len(cur_n) >= len(nj) else nj
-            if len(shorter) <= 4 and longer.startswith(shorter):
-                cur_word = words[j]
-                cur_n = nj
-                j += 1
-                continue
-            break
-        keep.append(cur_word)
-        i = j
-
-    if not keep:
-        return signal
-
-    # ── Step 3: Trim prolonged words ──────────────────────────────────────
-    # Only trim if the word is genuinely stretched:
-    #   duration > 0.9 s  AND  chars-per-second < 1.5  AND  word ≤ 6 chars
-    # This avoids trimming naturally slow or emphatic speech.
-    trimmed = []
-    for w in keep:
-        n = _norm(w)
-        dur = max(w["end"] - w["start"], 1e-6)
-        chars_per_sec = len(n) / dur
-        if dur > 0.90 and chars_per_sec < 1.5 and len(n) <= 6:
-            new_end = w["start"] + 0.50   # keep first 500 ms of the word
-            trimmed.append({"word": w["word"], "start": w["start"], "end": new_end})
-        else:
-            trimmed.append(w)
-    keep = trimmed
-
-    MAX_GAP = 0.20              # cap silences at 200 ms
-    FADE    = int(sr * 0.040)  # 40 ms crossfade (cosine — smooth, no chop)
-    ONSET   = int(sr * 0.015)  # 15 ms before word for natural attack
-
-    # Cosine fade curves — perceptually smooth, no abrupt amplitude dip
-    _fade_in  = ((1 - np.cos(np.linspace(0, np.pi, FADE))) / 2).astype(np.float32)
-    _fade_out = ((1 + np.cos(np.linspace(0, np.pi, FADE))) / 2).astype(np.float32)
-
-    # ── Step 4: Build audio regions ───────────────────────────────────────
-    regions = []
-    for idx, w in enumerate(keep):
-        s = max(0, int(w["start"] * sr) - ONSET)
-        if idx + 1 < len(keep):
-            raw_gap    = keep[idx + 1]["start"] - w["end"]
-            capped_gap = min(raw_gap, MAX_GAP)
-            e = int(w["end"] * sr) + int(capped_gap * sr)
-        else:
-            e = min(len(signal), int(w["end"] * sr) + int(sr * 0.15))
-        e = min(e, len(signal))
-        regions.append((s, e))
-
-    # ── Step 5: Concatenate with cosine crossfades ────────────────────────
-    lead_end = regions[0][0]
-    lead_s   = max(0, lead_end - int(sr * 0.3))
-    parts    = [signal[lead_s:lead_end].copy()]
-
-    for idx, (s, e) in enumerate(regions):
-        chunk = signal[s:e].copy()
-        if len(chunk) == 0:
-            continue
-        if idx > 0 and len(chunk) > FADE:
-            chunk[:FADE] *= _fade_in
-        if idx < len(regions) - 1 and len(chunk) > FADE:
-            chunk[-FADE:] *= _fade_out
-        parts.append(chunk)
-
-    result = np.concatenate(parts).astype(np.float32)
-    # Safety: never return near-silent output
-    if np.max(np.abs(result)) < 1e-6:
-        return signal
-    return result
 
 
-def _audio_comparison(signal: np.ndarray, sr: int,
-                      result: dict, text: str, words: list,
-                      clarity: float, baseline_clarity: float | None = None):
-    """
-    Render side-by-side audio comparison using the user's own voice,
-    then show a plain-English fluency report.
-    """
-    st.divider()
-    st.markdown(
-        "<h3 style='color:#5a4878;margin-bottom:4px;'>Your Recording</h3>",
-        unsafe_allow_html=True,
-    )
-
-    # Focus on original audio and accurate transcription
-    st.markdown(
-        "<div style='background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.45);"
-        "border-radius:14px;padding:14px 16px 10px;'>"
-        "<span style='color:#90bcd4;font-weight:700;font-size:14px;'>Original Recording</span>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    st.audio(_audio_bytes(signal, sr), format="audio/wav")
-    if text:
-        st.caption(f"*\"{text}\"*")
-    
-    _fluency_report_card(result, clarity, baseline_clarity)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2722,75 +2544,6 @@ def _fluency_report_card(result: dict, clarity: float,
         unsafe_allow_html=True,
     )
 
-    # Part 1: Score ring cards
-    c1, c2 = st.columns(2)
-
-    def _ring_svg(score: float | None, color: str) -> str:
-        circumference = 2 * 3.14159 * 68
-        if score is None:
-            filled = 0
-            center = "--"
-        else:
-            filled = (score / 100) * circumference
-            center = f"{score:.0f}%"
-        gap = max(0, circumference - filled)
-        return (
-            '<svg viewBox="0 0 160 160" width="160" height="160">'
-            '<circle cx="80" cy="80" r="68" stroke="rgba(180,160,140,0.22)" stroke-width="12" fill="none" />'
-            f'<circle cx="80" cy="80" r="68" stroke="{color}" stroke-width="12" fill="none" '
-            f'stroke-dasharray="{filled:.0f} {gap:.0f}" stroke-dashoffset="{circumference * 0.25:.0f}" '
-            'transform="rotate(-90 80 80)" stroke-linecap="round" />'
-            f'<text x="80" y="86" text-anchor="middle" fill="#3d3028" font-size="32" font-weight="800">{center}</text>'
-            '<text x="80" y="108" text-anchor="middle" fill="#a89880" font-size="11">Score</text>'
-            '</svg>'
-        )
-
-    def _subtitle(score: float | None) -> str:
-        if score is None:
-            return "Baseline not recorded"
-        if score >= 80:
-            return "Fluent Speech"
-        if score >= 70:
-            return "Mild Disfluency"
-        if score >= 50:
-            return "Moderate Stutter"
-        return "Significant Stutter"
-
-    with c1:
-        base_color = _score_color(baseline_clarity) if baseline_clarity is not None else "#90bcd4"
-        st.markdown(
-            '<div class="clay-card">'
-            '<div style="font-size:13px;color:#a89880;letter-spacing:1px;">Before Correction</div>'
-            f'{_ring_svg(baseline_clarity, base_color)}'
-            f'<div style="font-size:14px;color:#5a4a38;margin-top:6px;font-weight:700;">{_subtitle(baseline_clarity)}</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-
-    with c2:
-        cur_color = _score_color(clarity)
-        delta_line = "Record a baseline to compare"
-        delta_color = "#a89880"
-        if baseline_clarity is not None:
-            delta = clarity - baseline_clarity
-            if delta > 0:
-                delta_line = f"+{delta:.1f} pts improvement"
-                delta_color = "#7ec8a0"
-            elif delta < 0:
-                delta_line = f"{delta:.1f} pts"
-                delta_color = "#d4849a"
-            else:
-                delta_line = "0.0 pts"
-        st.markdown(
-            '<div class="clay-card">'
-            '<div style="font-size:13px;color:#a89880;letter-spacing:1px;">After Correction</div>'
-            f'{_ring_svg(clarity, cur_color)}'
-            f'<div style="font-size:14px;color:#5a4a38;margin-top:6px;font-weight:700;">{_subtitle(clarity)}</div>'
-            f'<div style="font-size:12px;color:{delta_color};margin-top:6px;">{delta_line}</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-
     st.divider()
 
     # Part 2: Stutter type visual cards
@@ -2868,27 +2621,16 @@ def _fluency_report_card(result: dict, clarity: float,
 
     st.divider()
 
-    # Part 4: Time summary (clean two-column stat block)
+    # Part 4: Time summary (single stat)
     original_duration = float(result.get("original_duration", 0))
-    corrected_duration = float(result.get("corrected_duration", 0))
 
-    t1, t2 = st.columns(2)
-    with t1:
-        st.markdown(
-            f'<div class="clay-card-inset" style="text-align:center;">'
-            f'<div style="font-size:28px;font-weight:800;color:#90bcd4;">{original_duration:.1f}s</div>'
-            f'<div style="font-size:12px;color:#a89880;margin-top:6px;">Original length</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    with t2:
-        st.markdown(
-            f'<div class="clay-card-inset" style="text-align:center;">'
-            f'<div style="font-size:28px;font-weight:800;color:#b094d4;">{corrected_duration:.1f}s</div>'
-            f'<div style="font-size:12px;color:#a89880;margin-top:6px;">Corrected length</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f'<div class="clay-card-inset" style="text-align:center;">'
+        f'<div style="font-size:28px;font-weight:800;color:#c4703a;">{original_duration:.1f}s</div>'
+        f'<div style="font-size:12px;color:#a89880;margin-top:6px;">Recording length</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
@@ -3001,8 +2743,18 @@ def page_home():
         # Show saved transcription if available
         saved_tx = bl.get("transcript", "")
         if saved_tx:
-            st.subheader("Transcription")
-            st.markdown(f"*{saved_tx}*")
+            st.subheader("What You Said")
+            clean_saved = _clean_transcript(saved_tx)
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(18px);'
+                f'border-radius:18px;padding:20px 24px;border:1.5px solid rgba(255,255,255,0.62);'
+                f'border-left:4px solid rgba(176,148,212,0.70);'
+                f'box-shadow:0 6px 20px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.75) inset;">'
+                f'<div style="font-size:15px;font-weight:500;color:#2d1a0e;line-height:1.85;'
+                f'font-family:Plus Jakarta Sans,sans-serif;">{clean_saved}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
         col1, col2 = st.columns(2)
         with col1:
@@ -3042,13 +2794,12 @@ def page_home():
 
             # Transcription first so it gets stored alongside results
             with st.spinner("Analyzing & transcribing…"):
-                transcript, words = _transcribe_timed(signal, sr)
+                transcript, _ = _transcribe_timed(signal, sr)
 
             st.session_state.baseline = {
                 "clarity":    clarity,
                 "result":     result,
                 "transcript": transcript,
-                "words":      words,
             }
             _save_progress()
 
@@ -3058,11 +2809,17 @@ def page_home():
 
             if transcript:
                 st.subheader("What You Said")
-                st.markdown(f"*{transcript}*")
-
-            # Side-by-side audio comparison using user's own voice
-            with st.expander("View Detailed Breakdown", expanded=False):
-                _audio_comparison(signal, sr, result, transcript, words, clarity, None)
+                clean = _clean_transcript(transcript)
+                st.markdown(
+                    f'<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(18px);'
+                    f'border-radius:18px;padding:20px 24px;border:1.5px solid rgba(255,255,255,0.62);'
+                    f'border-left:4px solid rgba(176,148,212,0.70);'
+                    f'box-shadow:0 6px 20px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.75) inset;">'
+                    f'<div style="font-size:15px;font-weight:500;color:#2d1a0e;line-height:1.85;'
+                    f'font-family:Plus Jakarta Sans,sans-serif;">{clean}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             st.divider()
             st.success("Baseline saved. Head to **Exercises** to start improving.")
@@ -3318,7 +3075,17 @@ def page_exercise_detail(ex_id: int):
 
             if tx:
                 st.subheader("What You Said")
-                st.markdown(f"*{tx}*")
+                clean_tx = _clean_transcript(tx)
+                st.markdown(
+                    f'<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(18px);'
+                    f'border-radius:18px;padding:20px 24px;border:1.5px solid rgba(255,255,255,0.62);'
+                    f'border-left:4px solid rgba(176,148,212,0.70);'
+                    f'box-shadow:0 6px 20px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.75) inset;">'
+                    f'<div style="font-size:15px;font-weight:500;color:#2d1a0e;line-height:1.85;'
+                    f'font-family:Plus Jakarta Sans,sans-serif;">{clean_tx}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             st.divider()
 
@@ -3386,13 +3153,7 @@ def page_exercise_detail(ex_id: int):
                 f"Best score: **{state['best_score']}%**"
             )
 
-            # Side-by-side audio comparison using user's own voice
-            with st.expander("View Detailed Breakdown", expanded=False):
-                _audio_comparison(
-                    signal, sr, result, tx, words, clarity,
-                    st.session_state.baseline["clarity"] if st.session_state.baseline else None
-                )
-
+            st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: PROGRESS
@@ -4717,7 +4478,17 @@ def page_challenge():
                     tx, words = _transcribe_timed(signal, sr)
                 if tx:
                     st.subheader("What You Said")
-                    st.markdown(f"*{tx}*")
+                    clean_tx = _clean_transcript(tx)
+                    st.markdown(
+                        f'<div style="background:rgba(255,255,255,0.40);backdrop-filter:blur(18px);'
+                        f'border-radius:18px;padding:20px 24px;border:1.5px solid rgba(255,255,255,0.62);'
+                        f'border-left:4px solid rgba(176,148,212,0.70);'
+                        f'box-shadow:0 6px 20px rgba(120,60,20,0.10),0 1px 0 rgba(255,255,255,0.75) inset;">'
+                        f'<div style="font-size:15px;font-weight:500;color:#2d1a0e;line-height:1.85;'
+                        f'font-family:Plus Jakarta Sans,sans-serif;">{clean_tx}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
     st.divider()
 
@@ -6589,11 +6360,6 @@ def page_shadowing():
                 ):
                     with st.spinner("Analyzing your shadowing..."):
                         result, clarity = _analyze(signal, sr)
-                        result["corrected_signal"] = \
-                            _smooth_corrected_audio(
-                                result["corrected_signal"],
-                                result["sr"]
-                            )
                     
                     _score_card(clarity, f"Phrase {current_phrase_index} Score")
                     _event_metrics(result)
