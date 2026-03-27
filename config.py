@@ -49,8 +49,8 @@ PAUSE_MAX_REMOVE_RATIO = 0.40  # Global cap for pause-frame removal across a cli
 # PROLONGATION DETECTION THRESHOLDS (Steps 7-9)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SIM_THRESHOLD       = 0.80   # prolongation sensitivity
-MIN_PROLONG_FRAMES  = 5      # minimum 5 frames (~150ms) to count as prolongation
+SIM_THRESHOLD       = 0.75   # slightly lower similarity needed
+MIN_PROLONG_FRAMES  = 4      # shorter minimum duration
 KEEP_FRAMES         = 2        # Keep 2 onset frames, remove the rest
 PROLONG_MAX_REMOVE_RATIO = 0.40  # Optimized from SEP-28K dataset calibration  
 CORR_THRESHOLD      = 14.0     
@@ -77,8 +77,8 @@ BLOCK_CONTEXT_FRAMES     = 3      # Context frames before/after candidate block
 BLOCK_RECOVERY_RATIO     = 1.8    # Post/pre energy recovery ratio required
 
 # SPECTRAL FEATURES (User-requested DSP enhancement)
-SPECTRAL_FLUX_THRESHOLD     = 0.04
-SPECTRAL_FLATNESS_THRESHOLD = 0.40
+SPECTRAL_FLUX_THRESHOLD     = 0.10   # more lenient flux threshold
+SPECTRAL_FLATNESS_THRESHOLD = 0.55   # more lenient flatness threshold
 
 # GLOBAL MEANING-PRESERVATION SAFETY
 MAX_TOTAL_DURATION_REDUCTION = 0.40  # Allow up to 40% removal (prevents safety reversion)

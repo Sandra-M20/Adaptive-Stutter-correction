@@ -216,9 +216,9 @@ def _get_streak() -> int:
 MIN_DURATION   = 2.0     # reject recordings shorter than this (seconds)
 
 EXERCISE_TARGETS = {
-    0: 40, 1: 45, 2: 50, 3: 52, 4: 55,
-    5: 58, 6: 60, 7: 62, 8: 63, 9: 65,
-    10: 65, 11: 67, 12: 68, 13: 70
+    0: 60, 1: 63, 2: 65, 3: 67, 4: 68,
+    5: 70, 6: 72, 7: 73, 8: 74, 9: 75,
+    10: 76, 11: 78, 12: 80, 13: 82
 }
 
 EXERCISES = [
@@ -459,9 +459,14 @@ def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
         return "", []
 
     try:
+        # Force reload if model size changed
+        if "whisper_model" in st.session_state and st.session_state.get("whisper_model_size") == "base.en":
+            del st.session_state["whisper_model"]
+            del st.session_state["whisper_model_size"]
+            print("[WHISPER] Cleared cached base.en model — will reload small.en")
         if "whisper_model" not in st.session_state:
             # Try base.en first for better English accuracy, then small.en
-            for model_size in ("base.en", "small.en", "base", "small"):
+            for model_size in ("small.en", "small", "base.en", "base"):
                 try:
                     with st.spinner(
                         f"Loading transcription model '{model_size}' "
@@ -495,12 +500,15 @@ def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
             language="en",
             fp16=False,
             word_timestamps=True,
-            initial_prompt="This is clear speech about everyday topics. The speaker may stutter or repeat words occasionally.",
+            initial_prompt="Transcribe every word exactly as spoken including all repetitions, stutters, repeated words, partial words and fillers. Examples: 'I I I want', 'th-the cat', 'um uh'. Do not correct or clean up anything.",
             condition_on_previous_text=False,
-            temperature=0.0,  # Lower temperature for more consistent results
-            beam_size=5,     # Use beam search for better accuracy
-            best_of=5,        # Try multiple decodings
-            patience=1.0,     # Allow more time for better decoding
+            temperature=0.0,
+            beam_size=5,
+            best_of=5,
+            patience=2.0,
+            no_speech_threshold=0.3,
+            compression_ratio_threshold=2.4,
+            suppress_tokens=[],
         )
         os.unlink(tmp)
 
@@ -514,6 +522,7 @@ def _transcribe_timed(signal: np.ndarray, sr: int) -> tuple:
 
         # Clean up the transcription text
         text = res.get("text", "").strip()
+        print(f"[WHISPER] Raw transcript: '{text[:120]}'")
         
         # Remove excessive spaces and clean up punctuation
         text = ' '.join(text.split())  # Normalize spaces
@@ -616,32 +625,40 @@ def _compute_clarity(result: dict) -> float:
     """
     Clarity score 0-100%. Higher = more fluent.
 
-    Calibrated expected ranges:
-      Fluent (0 events, <8% removed)     → 88-100%
-      Mild   (1-3 events, 8-18% removed) → 68-87%
-      Moderate     (4-7, 18-32% removed)     → 44-67%
-      Severe       (8+, 32%+ removed)          → below 44%
+    Penalty hierarchy:
+      Prolongation = 10 points (most severe)
+      Repetition   = 5  points (medium)
+      Pause        = 3  points (lightest)
+
+    Normalisation:
+      Uses square root of duration ratio to balance short and long recordings.
+      Short recordings (10s): ref = 1.0
+      Medium recordings (30s): ref = 1.73
+      Long recordings (120s): ref = 3.46
+      This prevents long recordings from scoring 0% unfairly while still
+      penalising heavy stuttering proportionally.
+
+    Expected ranges regardless of recording length:
+      Fluent          (0-1 events)     → 90-100%
+      Mild stutter    (2-4 events)     → 70-89%
+      Moderate stutter (5-10 events)  → 45-69%
+      Severe stutter  (10+ events)    → below 45%
     """
     pauses   = result.get("pause_events", 0)
     prolong  = result.get("prolongation_events", 0)
     rep      = result.get("repetition_events", 0)
-    original  = max(result.get("original_duration", 1.0), 0.1)
-    corrected = result.get("corrected_duration", original)
+    original = max(result.get("original_duration", 1.0), 0.1)
 
-    # Removal ratio capped at 50%
-    removed_ratio = min(0.50, max(0.0, (original - corrected) / original))
+    # Square root normalisation — scales fairly for any duration
+    import math
+    ref = max(math.sqrt(original / 10.0), 0.5)
 
-    # Duration score — 0% removed = 100, 50% removed = 20
-    duration_score = max(0.0, 100.0 - (removed_ratio * 160.0))
+    # Weighted penalty
+    raw_penalty = (prolong * 10) + (rep * 5) + (pauses * 3)
+    normalised_penalty = raw_penalty / ref
 
-    # Event score — normalised by recording length
-    ref = max(original / 10.0, 0.8)
-    event_penalty = (pauses * 3 + prolong * 5 + rep * 4) / ref
-    event_score = max(0.0, 100.0 - min(event_penalty, 100.0))
-
-    # 50/50 blend
-    score = (duration_score * 0.50) + (event_score * 0.50)
-    return round(max(0.0, min(100.0, score)), 1)
+    score = max(0.0, 100.0 - normalised_penalty)
+    return round(min(100.0, score), 1)
 # === CLARITY SCORE IMPLEMENTATION: END ===
 
 
@@ -839,34 +856,38 @@ def _already_completed_today() -> bool:
 
 
 def _clarity_label(score: float) -> str:
-    if score >= 80:  return "Fully Fluent"
-    if score >= 70:  return "Efficient"
-    if score >= 50:  return "Moderate Stutter"
-    return "Needs Attention"
+    if score >= 90:  return "Fully Fluent"
+    if score >= 75:  return "Mostly Fluent"
+    if score >= 55:  return "Moderate Stutter"
+    if score >= 35:  return "Significant Stutter"
+    return "Severe Stutter"
 
 
 def _clarity_interpretation(score: float,
                             pause_events: int,
                             prolongation_events: int,
                             repetition_events: int) -> str:
-    if score >= 80:
-        return "Your speech was fully fluent — no significant disfluencies were detected."
-    if score >= 70:
-        return (
-            "Efficient speech detected. Minor disfluencies found: "
-            f"{prolongation_events} prolonged sound(s), {repetition_events} repetition(s)."
-        )
-    if score >= 50:
-        return (
-            "Stutter detected. The system found "
-            f"{pause_events} block(s), {prolongation_events} prolongation(s), and "
-            f"{repetition_events} repetition(s). Keep practising."
-        )
-    return (
-        "Significant stuttering detected: "
-        f"{pause_events} block(s), {prolongation_events} prolongation(s), "
-        f"{repetition_events} repetition(s). Audio was corrected above."
-    )
+    if prolongation_events > 0:
+        dominant = f"{prolongation_events} prolonged sound(s) — the most clinically significant finding"
+    elif pause_events > 0:
+        dominant = f"{pause_events} pause/block event(s)"
+    elif repetition_events > 0:
+        dominant = f"{repetition_events} repetition(s)"
+    else:
+        dominant = "no significant disfluencies"
+
+    if score >= 90:
+        return "Your speech was fully fluent — no significant disfluencies detected."
+    if score >= 75:
+        return f"Mostly fluent speech. Minor disfluencies found: {dominant}."
+    if score >= 55:
+        return (f"Moderate stuttering detected: {dominant}. "
+                f"Total events — pauses: {pause_events}, "
+                f"prolongations: {prolongation_events}, "
+                f"repetitions: {repetition_events}.")
+    return (f"Significant stuttering: {dominant}. "
+            f"Pauses: {pause_events}, prolongations: {prolongation_events}, "
+            f"repetitions: {repetition_events}. Keep practising.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2219,6 +2240,115 @@ textarea::placeholder {
         font-size: 13px !important;
         letter-spacing: 0.3px !important;
     }
+
+    /* ── TABS — Aurora Glassmorphism override ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(255,255,255,0.35) !important;
+        backdrop-filter: blur(20px) !important;
+        -webkit-backdrop-filter: blur(20px) !important;
+        border-radius: 16px !important;
+        padding: 5px !important;
+        border: 1.5px solid rgba(255,255,255,0.62) !important;
+        gap: 4px !important;
+        border-bottom: none !important;
+        box-shadow:
+            0 4px 16px rgba(120,60,20,0.10),
+            0 1px 0 rgba(255,255,255,0.80) inset !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background: transparent !important;
+        border-radius: 12px !important;
+        border: none !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        color: #7a5540 !important;
+        padding: 10px 22px !important;
+        transition: all 0.25s ease !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(255,255,255,0.45) !important;
+        color: #2d1a0e !important;
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: linear-gradient(135deg,
+            rgba(176,148,212,0.75),
+            rgba(144,188,216,0.75)) !important;
+        color: white !important;
+        font-weight: 800 !important;
+        box-shadow:
+            0 4px 14px rgba(176,148,212,0.40),
+            0 1px 0 rgba(255,255,255,0.35) inset !important;
+        border-radius: 12px !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+    .stTabs [data-baseweb="tab-border"] {
+        display: none !important;
+    }
+    .stTabs [data-baseweb="tab-panel"] {
+        background: rgba(255,255,255,0.22) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border-radius: 0 0 18px 18px !important;
+        border: 1.5px solid rgba(255,255,255,0.55) !important;
+        border-top: none !important;
+        padding: 20px !important;
+        box-shadow:
+            0 8px 24px rgba(120,60,20,0.08),
+            0 1px 0 rgba(255,255,255,0.60) inset !important;
+    }
+
+    /* ── FILE UPLOADER — aurora theme ── */
+    [data-testid="stFileUploader"] {
+        background: rgba(255,255,255,0.32) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border-radius: 20px !important;
+        border: 2px dashed rgba(176,148,212,0.55) !important;
+        padding: 20px !important;
+        box-shadow:
+            0 4px 16px rgba(120,60,20,0.08),
+            0 1px 0 rgba(255,255,255,0.75) inset !important;
+        transition: all 0.3s ease !important;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: rgba(176,148,212,0.85) !important;
+        background: rgba(255,255,255,0.45) !important;
+        box-shadow:
+            0 6px 24px rgba(150,120,200,0.18),
+            0 1px 0 rgba(255,255,255,0.80) inset !important;
+    }
+    [data-testid="stFileUploader"] section {
+        background: transparent !important;
+    }
+    [data-testid="stFileUploader"] button {
+        background: linear-gradient(135deg,#b094d4,#80bcd8) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 13px !important;
+        padding: 8px 20px !important;
+        box-shadow: 0 4px 14px rgba(176,148,212,0.45) !important;
+        transition: all 0.25s ease !important;
+    }
+    [data-testid="stFileUploader"] button:hover {
+        background: linear-gradient(135deg,#c4a0e8,#90d0f0) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(176,148,212,0.60) !important;
+    }
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] span,
+    [data-testid="stFileUploader"] small,
+    [data-testid="stFileUploader"] div {
+        color: #7a5540 !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-weight: 600 !important;
+        font-size: 13px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2451,10 +2581,11 @@ def _clarity_color(score: float) -> str:
 
 
 def _clarity_label(score: float) -> str:
-    if score >= 80:  return "Fully Fluent"
-    if score >= 70:  return "Efficient"
-    if score >= 50:  return "Moderate Stutter"
-    return "Needs Attention"
+    if score >= 90:  return "Fully Fluent"
+    if score >= 75:  return "Mostly Fluent"
+    if score >= 55:  return "Moderate Stutter"
+    if score >= 35:  return "Significant Stutter"
+    return "Severe Stutter"
 
 
 def _score_card(score: float, label: str = "Clarity Score"):
@@ -2515,6 +2646,25 @@ def _score_card(score: float, label: str = "Clarity Score"):
     """, unsafe_allow_html=True)
 
 
+def _severity(count: int, stutter_type: str = "default") -> str:
+    """Severity label varies by stutter type due to different clinical weights."""
+    if stutter_type == "prolongation":
+        if count == 0:  return "None"
+        if count == 1:  return "Mild"
+        if count <= 3:  return "Moderate"
+        return "Severe"
+    elif stutter_type == "pause":
+        if count == 0:  return "None"
+        if count <= 2:  return "Mild"
+        if count <= 6:  return "Moderate"
+        return "Frequent"
+    else:
+        if count == 0:  return "None"
+        if count <= 3:  return "Mild"
+        if count <= 7:  return "Moderate"
+        return "Frequent"
+
+
 def _event_metrics(result: dict):
     dur = result.get("original_duration", 0)
     pau = result.get("pause_events", 0)
@@ -2572,14 +2722,26 @@ def _fluency_report_card(result: dict, clarity: float,
             return "#e8c060"
         return "#d4849a"
 
-    def _severity(count: int) -> str:
-        if count == 0:
-            return "None Detected"
-        if count <= 2:
-            return "Mild"
-        if count <= 5:
-            return "Moderate"
-        return "Frequent"
+    def _severity(count: int, stutter_type: str = "default") -> str:
+        """Severity label varies by stutter type due to different clinical weights."""
+        if stutter_type == "prolongation":
+            # Prolongations are most severe — even 1 is significant
+            if count == 0:  return "None"
+            if count == 1:  return "Mild"
+            if count <= 3:  return "Moderate"
+            return "Severe"
+        elif stutter_type == "pause":
+            # Pauses — some natural pauses are normal
+            if count == 0:  return "None"
+            if count <= 2:  return "Mild"
+            if count <= 6:  return "Moderate"
+            return "Frequent"
+        else:
+            # Repetitions — most lenient threshold
+            if count == 0:  return "None"
+            if count <= 3:  return "Mild"
+            if count <= 7:  return "Moderate"
+            return "Frequent"
 
     pause_events = int(result.get("pause_events", 0))
     prolong_events = int(result.get("prolongation_events", 0))
@@ -2823,12 +2985,82 @@ def page_home():
     st.divider()
 
     # ── Record baseline ────────────────────────────────────────────────────
-    st.subheader("Step 1 — Record Your Baseline")
+    st.subheader("Step 1 — Record or Upload Your Baseline")
     st.markdown(
-        "Speak naturally into the microphone for at least **10 seconds**. "
-        "This recording helps the app understand your current speech pattern "
-        "and sets a personal starting point to measure your improvement from."
+        "Speak naturally for at least **10 seconds**. "
+        "You can record live or upload an existing audio file."
     )
+
+    # ── Input method tabs ──────────────────────────────────────────
+    input_tab1, input_tab2 = st.tabs(["Record Live", "Upload Audio File"])
+
+    signal, sr = None, None
+
+    with input_tab1:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.32);backdrop-filter:blur(18px);'
+            'border-radius:20px;padding:20px 24px;margin:12px 0;'
+            'border:1.5px solid rgba(255,255,255,0.60);'
+            'box-shadow:0 6px 20px rgba(120,60,20,0.10),'
+            '0 1px 0 rgba(255,255,255,0.75) inset;">'
+            '<div style="font-size:13px;font-weight:600;color:#5a3520;'
+            'font-family:Plus Jakarta Sans,sans-serif;margin-bottom:4px;">'
+            'Click microphone button below to start recording. '
+            'Speak for at least 10 seconds at your natural pace.'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+        rec_signal, rec_sr = _recording_section("home_rec")
+        if rec_signal is not None:
+            signal, sr = rec_signal, rec_sr
+
+    with input_tab2:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.32);backdrop-filter:blur(18px);'
+            'border-radius:20px;padding:20px 24px;margin:12px 0;'
+            'border:1.5px solid rgba(255,255,255,0.60);'
+            'box-shadow:0 6px 20px rgba(120,60,20,0.10),'
+            '0 1px 0 rgba(255,255,255,0.75) inset;">'
+            '<div style="font-size:13px;font-weight:600;color:#5a3520;'
+            'font-family:Plus Jakarta Sans,sans-serif;margin-bottom:4px;">'
+            'Upload a WAV, MP3, FLAC, or OGG file of your speech. '
+            'The file should contain at least 10 seconds of clear speech.'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+        uploaded_file = st.file_uploader(
+            "Choose an audio file",
+            type=["wav", "mp3", "flac", "ogg", "m4a"],
+            key="home_upload",
+            label_visibility="collapsed"
+        )
+        if uploaded_file is not None:
+            try:
+                up_signal, up_sr = _load_audio(uploaded_file)
+                dur = len(up_signal) / up_sr
+                if dur < MIN_DURATION:
+                    st.warning(
+                        f"File too short ({dur:.1f}s). "
+                        f"Please upload at least {MIN_DURATION:.0f} seconds of speech."
+                    )
+                else:
+                    st.markdown(
+                        f'<div style="background:rgba(112,200,144,0.20);'
+                        f'backdrop-filter:blur(14px);border-radius:14px;'
+                        f'padding:12px 18px;margin:8px 0;'
+                        f'border:1.5px solid rgba(112,200,144,0.45);">'
+                        f'<div style="font-size:13px;font-weight:700;'
+                        f'font-family:Plus Jakarta Sans,sans-serif;color:#2d5a2d;">'
+                        f'File loaded: {uploaded_file.name} — {dur:.1f}s</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.audio(uploaded_file, format=f"audio/{uploaded_file.name.split('.')[-1]}")
+                    up_signal = _boost_audio(up_signal, up_sr, target_db=-12.0)
+                    signal, sr = up_signal, up_sr
+            except Exception as e:
+                st.error(f"Could not load audio file: {e}")
+
     st.info(
         "💡 **Not sure what to say?** Try any of these:\n\n"
         "- Introduce yourself — your name, where you're from\n"
@@ -2836,8 +3068,6 @@ def page_home():
         "- Talk about a hobby or something you enjoy\n\n"
         "Just speak at your own natural, comfortable pace. There is no right or wrong answer."
     )
-
-    signal, sr = _recording_section("home_rec")
 
     if signal is not None:
         if st.button("Analyze My Speech", type="primary", use_container_width=True):
@@ -3517,13 +3747,6 @@ def page_progress():
 # PAGE: LOGIN / REGISTER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _severity(count: int) -> str:
-    if count == 0:  return "None"
-    if count <= 2:  return "Mild"
-    if count <= 5:  return "Moderate"
-    return "Frequent"
-
-
 def _home_header():
     st.markdown("""
     <div style="background:linear-gradient(135deg,
@@ -3620,19 +3843,19 @@ def _event_metrics(result: dict):
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#90bcd4;margin-bottom:4px;">{pau}</div>'
-        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Pauses ({_severity(pau)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Pauses ({_severity(pau, "pause")})</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#f0a080;margin-bottom:4px;">{pro}</div>'
-        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Prolongations ({_severity(pro)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Prolongations ({_severity(pro, "prolongation")})</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#d490a0;margin-bottom:4px;">{rep}</div>'
-        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Repetitions ({_severity(rep)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Repetitions ({_severity(rep, "repetition")})</div>'
         f'</div>'
         f'<div style="background:rgba(255,255,255,0.35);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:16px;padding:16px;text-align:center;box-shadow:0 4px 16px rgba(160,130,200,0.14), 0 1px 0 rgba(255,255,255,0.60) inset;">'
         f'<div style="font-size:24px;font-weight:800;color:#e86090;margin-bottom:4px;">{blk}</div>'
-        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Blocks ({_severity(blk)})</div>'
+        f'<div style="font-size:11px;color:#7a5540;text-transform:uppercase;letter-spacing:0.8px;font-weight:600;">Blocks ({_severity(blk, "pause")})</div>'
         f'</div>'
         '</div></div>',
         unsafe_allow_html=True,

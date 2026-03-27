@@ -189,15 +189,15 @@ class RepetitionCorrector:
         detection_events = []
         
         i = 0
-        rep_count = 0
-        while i < len(chunks) - 2:
-            # Compare chunk i with chunk i+2 (skip one)
-            # True repetitions sound like chunk N then chunk N+2
-            # while chunk N+1 is a very short transition
+        removed = 0
+        detection_events = []
+
+        while i < len(chunks) - 1:
+            if removed >= max_remove_chunks:
+                break
+
             f1 = chunk_feats[i]
             f2 = chunk_feats[i + 1]
-            f3 = chunk_feats[i + 2] if i + 2 < len(chunks) else None
-
             norm1 = np.linalg.norm(f1)
             norm2 = np.linalg.norm(f2)
 
@@ -205,29 +205,44 @@ class RepetitionCorrector:
                 i += 1
                 continue
 
-            sim_adjacent = np.dot(f1, f2) / (norm1 * norm2)
+            sim = float(np.dot(f1, f2) / (norm1 * norm2))
 
-            # Only flag as repetition if:
-            # 1. Current and next chunk are very similar (sim > threshold)
-            # 2. Energy of current chunk is non-trivial (not silence)
+            # Energy check — both chunks must have significant energy
+            # This prevents removing silence or near-silence chunks
             energy1 = float(np.mean(chunks[i] ** 2))
-            energy2 = float(np.mean(chunks[i+1] ** 2))
+            energy2 = float(np.mean(chunks[i + 1] ** 2))
+            min_energy = 0.002  # ignore very quiet chunks
 
-            is_repetition = (
-                sim_adjacent > self.sim_threshold and
-                energy1 > 1e-5 and
-                energy2 > 1e-5 and
-                removed < max_remove_chunks
-            )
-
-            if is_repetition:
+            # Only flag as repetition if ALL conditions are true:
+            # 1. Very high similarity (above threshold)
+            # 2. Both chunks have real speech energy
+            # 3. We look ahead — chunk i+2 must be DIFFERENT from chunk i
+            #    (real repetitions have: same, same, different pattern)
+            #    (fluent speech has: similar, similar, similar — no change)
+            is_true_repetition = False
+            if sim > self.sim_threshold and energy1 > min_energy and energy2 > min_energy:
+                # Check chunk i+2 — in real repetitions it should differ
+                if i + 2 < len(chunks):
+                    f3 = chunk_feats[i + 2]
+                    norm3 = np.linalg.norm(f3)
+                    if norm3 > 1e-9:
+                        sim_ahead = float(np.dot(f1, f3) / (norm1 * norm3))
+                        # Real repetition: chunk[i] ≈ chunk[i+1] but chunk[i+2] differs
+                        # Fluent speech: chunk[i] ≈ chunk[i+1] ≈ chunk[i+2] (all similar)
+                        if sim_ahead < (self.sim_threshold - 0.05):
+                            is_true_repetition = True
+                    else:
+                        # chunk i+2 is silent — likely a boundary, flag as repetition
+                        is_true_repetition = True
+                # If no chunk i+2, cannot confirm — skip
+            
+            if is_true_repetition:
                 keep[i] = False
                 removed += 1
-                rep_count += 1
                 detection_events.append({
                     "start_sample": starts[i],
                     "end_sample":   starts[i] + self.chunk_size,
-                    "duration_s":   self.chunk_size / self.sr
+                    "duration_s":   self.chunk_size / self.sr,
                 })
                 i += 2  # skip both to avoid chain removal
             else:

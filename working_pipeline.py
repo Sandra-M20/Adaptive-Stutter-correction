@@ -47,69 +47,46 @@ def _crossfade_join(chunk_a: np.ndarray, chunk_b: np.ndarray,
 
 def _reconstruct(frames: list, hop_size: int, sr: int) -> np.ndarray:
     """
-    Reconstruct audio from overlapping frames using Overlap-Add with a
-    Hanning window.  Works correctly for 50 % overlap (hop = frame/2).
+    Reconstruct audio from overlapping frames using simple concatenation
+    with crossfade at boundaries. The OLA Hanning approach was causing
+    severe RMS amplification (up to 175x) due to window normalisation errors.
+    This version is stable and preserves signal amplitude correctly.
     """
     if not frames:
         return np.array([], dtype=np.float32)
 
-    frame_size = len(frames[0])
-    window = np.hanning(frame_size).astype(np.float64)
+    if len(frames) == 1:
+        return np.asarray(frames[0], dtype=np.float32)
 
-    # Hanning OLA normalisation constant (for 50 % overlap)
-    # sum of squared Hanning windows at any point ≈ 0.5
-    # We compute it exactly from two adjacent windows so it is accurate.
-    norm = window ** 2
-    if frame_size > hop_size:
-        norm[:frame_size - hop_size] += window[hop_size:] ** 2
-
-    out_len = hop_size * (len(frames) - 1) + frame_size
-    out  = np.zeros(out_len, dtype=np.float64)
-    wsum = np.zeros(out_len, dtype=np.float64)
-
+    # Use simple overlap-add with a safe rectangular window
+    # Each frame contributes hop_size samples to the output
+    # The last frame contributes its full length
+    parts = []
     for i, frame in enumerate(frames):
-        s = i * hop_size
-        e = s + frame_size
-        f = np.asarray(frame, dtype=np.float64)
-        out[s:e]  += f * window
-        wsum[s:e] += window ** 2
+        f = np.asarray(frame, dtype=np.float32)
+        if i < len(frames) - 1:
+            parts.append(f[:hop_size])
+        else:
+            parts.append(f)
 
-    mask = wsum > 1e-10
-    out[mask] /= wsum[mask]
-    out = out.astype(np.float32)
+    if not parts:
+        return np.array([], dtype=np.float32)
 
-    # Add explicit crossfade at splice points (detected by low frame similarity)
-    if len(frames) < 2:
-        return out
+    out = np.concatenate(parts)
 
-    def _frame_similarity(a: np.ndarray, b: np.ndarray) -> float:
-        a = a.astype(np.float64)
-        b = b.astype(np.float64)
-        denom = np.linalg.norm(a) * np.linalg.norm(b)
-        if denom < 1e-8:
-            return 0.0
-        return float(np.dot(a, b) / denom)
+    # Apply crossfades at every boundary to avoid clicks
+    fade_samples = min(int(sr * 0.005), hop_size // 4)  # 5ms fade
+    if fade_samples > 1:
+        fade_in  = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+        fade_out = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+        pos = 0
+        for i in range(len(frames) - 1):
+            pos += hop_size
+            if pos >= fade_samples and pos + fade_samples <= len(out):
+                out[pos - fade_samples: pos] *= fade_out
+                out[pos: pos + fade_samples] *= fade_in
 
-    splice_frames = []
-    for i in range(1, len(frames)):
-        if _frame_similarity(frames[i - 1], frames[i]) < 0.6:
-            splice_frames.append(i)
-
-    if not splice_frames:
-        return out
-
-    shift = 0
-    for i in splice_frames:
-        splice_sample = i * hop_size - shift
-        if splice_sample <= 0 or splice_sample >= len(out):
-            continue
-        left = out[:splice_sample]
-        right = out[splice_sample:]
-        joined = _crossfade_join(left, right, crossfade_ms=20, sr=sr)
-        shift += (len(left) + len(right) - len(joined))
-        out = joined
-
-    return out
+    return out.astype(np.float32)
 
 
 def _post_denoise(signal: np.ndarray, sr: int) -> np.ndarray:
@@ -290,6 +267,16 @@ def run_pipeline(signal: np.ndarray, sr: int,
     reconstructed = _reconstruct(frames, hop_size, sr)
     if len(reconstructed) == 0:
         reconstructed = signal.copy()
+    else:
+        # Safety: if reconstruction amplified the signal, renormalize
+        rms_orig = float(np.sqrt(np.mean(signal ** 2)))
+        rms_recon = float(np.sqrt(np.mean(reconstructed ** 2)))
+        if rms_orig > 1e-8 and rms_recon > rms_orig * 3.0:
+            # Reconstruction blew up — scale back to original RMS level
+            scale = rms_orig / rms_recon
+            reconstructed = (reconstructed * scale).astype(np.float32)
+            print(f"[Pipeline] OLA amplification corrected: "
+                  f"rms {rms_recon:.4f} → {float(np.sqrt(np.mean(reconstructed**2))):.4f}")
     
     # Check OLA reconstruction energy loss
     rms_reconstructed = float(np.sqrt(np.mean(reconstructed**2)))
@@ -307,8 +294,8 @@ def run_pipeline(signal: np.ndarray, sr: int,
     # Step 7: Repetition correction
     rep_corrector = RepetitionCorrector(
         sr=sr,
-        sim_threshold=0.88,
-        max_total_removal_ratio=0.12,
+        sim_threshold=0.95,
+        max_total_removal_ratio=0.08,
     )
     corrected, rep_stats = rep_corrector.correct(reconstructed)
     print(f"[DIAG] REP CORRECTOR RETURNED: {rep_stats}")
